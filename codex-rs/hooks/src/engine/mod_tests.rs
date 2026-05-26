@@ -204,6 +204,7 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert!(engine.warnings().is_empty());
@@ -218,6 +219,7 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
         plugin_hook_load_warnings: Vec::new(),
         shell_program: None,
         shell_args: Vec::new(),
+        prompt_hook_runner: None,
     });
     assert!(listed.hooks[0].is_managed);
     let cwd = cwd();
@@ -307,6 +309,7 @@ async fn requirements_managed_hooks_execute_windows_command_override() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     let outcome = engine
@@ -386,6 +389,7 @@ fn unknown_requirement_source_hooks_stay_managed() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert_eq!(engine.handlers.len(), 1);
@@ -468,6 +472,7 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert_eq!(engine.handlers.len(), 1);
@@ -531,6 +536,7 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert_eq!(engine.handlers.len(), 1);
@@ -692,6 +698,7 @@ fn requirements_managed_hooks_load_when_managed_dir_is_missing() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert!(engine.warnings().is_empty());
@@ -710,7 +717,10 @@ fn requirements_managed_hooks_load_when_managed_dir_is_missing() {
         tool_input: serde_json::json!({ "command": "echo hello" }),
     });
     assert_eq!(preview.len(), 1);
-    assert_eq!(engine.handlers[0].command, "echo hi");
+    assert_eq!(
+        engine.handlers[0].command().expect("command handler"),
+        "echo hi"
+    );
     assert_eq!(
         engine.handlers[0].source_path,
         AbsolutePathBuf::try_from(missing_dir).expect("absolute missing dir")
@@ -748,6 +758,7 @@ fn allow_managed_hooks_only_false_keeps_unmanaged_hooks() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert!(engine.warnings().is_empty());
@@ -802,6 +813,7 @@ fn allow_managed_hooks_only_in_config_toml_does_not_enable_policy() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert!(engine.warnings().is_empty());
@@ -872,6 +884,7 @@ fn allow_managed_hooks_only_skips_unmanaged_json_and_toml_hooks() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert!(engine.handlers.is_empty());
@@ -911,6 +924,7 @@ fn allow_managed_hooks_only_skips_unmanaged_plugin_hooks() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert!(engine.handlers.is_empty());
@@ -983,6 +997,7 @@ fn allow_managed_hooks_only_keeps_managed_requirement_and_config_layer_hooks() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert!(engine.warnings().is_empty());
@@ -990,7 +1005,7 @@ fn allow_managed_hooks_only_keeps_managed_requirement_and_config_layer_hooks() {
         engine
             .handlers
             .iter()
-            .map(|handler| handler.command.as_str())
+            .map(|handler| handler.command().expect("command handler"))
             .collect::<Vec<_>>(),
         vec![
             "python3 /tmp/requirements-hook.py",
@@ -1093,6 +1108,7 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert!(engine.warnings().iter().any(|warning| {
@@ -1186,6 +1202,7 @@ print(json.dumps({
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     let preview = engine.preview_pre_tool_use(&PreToolUseRequest {
@@ -1213,6 +1230,7 @@ print(json.dumps({
         plugin_hook_load_warnings: Vec::new(),
         shell_program: None,
         shell_args: Vec::new(),
+        prompt_hook_runner: None,
     });
     assert_eq!(
         listed.hooks[0].plugin_id.as_deref(),
@@ -1300,10 +1318,11 @@ fn plugin_hook_sources_expand_plugin_placeholders() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert_eq!(
-        engine.handlers[0].command,
+        engine.handlers[0].command().expect("command handler"),
         format!(
             "run {} {} {} {}",
             plugin_root.display(),
@@ -1344,6 +1363,7 @@ fn plugin_hook_load_warnings_are_startup_warnings() {
             program: String::new(),
             args: Vec::new(),
         },
+        None,
     );
 
     assert_eq!(engine.warnings(), &["failed plugin hook".to_string()]);
