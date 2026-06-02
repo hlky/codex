@@ -144,20 +144,28 @@ fn relative_absolute_path_fields_resolve_against_base_dir() {
         vec![fragment(
             "cfg_123",
             "Base policy",
-            "model_instructions_file = \"instructions.md\"",
+            "model_instructions_file = \"instructions.md\"\ndeveloper_instructions_file = \"developer.md\"",
         )],
         &base_dir,
     )
     .expect("relative paths should match existing MDM semantics");
 
-    let path = layers[0]
+    let model_path = layers[0]
         .config
         .get("model_instructions_file")
         .and_then(TomlValue::as_str)
-        .expect("path should be present");
-    let expected =
+        .expect("model path should be present");
+    let expected_model =
         AbsolutePathBuf::resolve_path_against_base("instructions.md", base_dir.as_path());
-    assert_eq!(path, expected.to_string_lossy());
+    assert_eq!(model_path, expected_model.to_string_lossy());
+    let developer_path = layers[0]
+        .config
+        .get("developer_instructions_file")
+        .and_then(TomlValue::as_str)
+        .expect("developer path should be present");
+    let expected_developer =
+        AbsolutePathBuf::resolve_path_against_base("developer.md", base_dir.as_path());
+    assert_eq!(developer_path, expected_developer.to_string_lossy());
 }
 
 #[test]

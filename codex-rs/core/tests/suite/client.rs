@@ -2296,6 +2296,67 @@ async fn includes_developer_instructions_message_in_request() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn includes_developer_instructions_file_message_in_request() {
+    skip_if_no_network!();
+    let server = MockServer::start().await;
+
+    let resp_mock = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp1"), ev_completed("resp1")]),
+    )
+    .await;
+    let mut builder = test_codex()
+        .with_auth(CodexAuth::from_api_key("Test API Key"))
+        .with_pre_build_hook(|codex_home| {
+            std::fs::write(
+                codex_home.join("developer.md"),
+                "file-backed developer instructions",
+            )
+            .expect("write developer instructions file");
+            std::fs::write(
+                codex_home.join("config.toml"),
+                concat!(
+                    "developer_instructions = \"inline developer instructions\"\n",
+                    "developer_instructions_file = \"developer.md\"\n",
+                ),
+            )
+            .expect("write config.toml");
+        });
+    let codex = builder
+        .build(&server)
+        .await
+        .expect("create new conversation")
+        .codex;
+
+    codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "hello".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await
+        .unwrap();
+
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let request = resp_mock.single_request();
+    assert!(
+        message_input_text_contains(&request, "developer", "file-backed developer instructions"),
+        "expected developer instructions file contents in a developer message"
+    );
+    assert!(
+        !message_input_text_contains(&request, "developer", "inline developer instructions"),
+        "expected developer_instructions_file to override inline developer_instructions"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn azure_responses_request_includes_store_and_reasoning_ids() {
     skip_if_no_network!();
 

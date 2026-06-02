@@ -42,6 +42,8 @@ pub struct ConfigProfile {
     pub chatgpt_base_url: Option<String>,
     /// Optional path to a file containing model instructions.
     pub model_instructions_file: Option<AbsolutePathBuf>,
+    /// Optional path to a file containing developer instructions.
+    pub developer_instructions_file: Option<AbsolutePathBuf>,
     /// Deprecated: ignored.
     #[schemars(skip)]
     pub js_repl_node_path: Option<AbsolutePathBuf>,
