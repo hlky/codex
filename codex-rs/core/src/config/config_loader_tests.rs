@@ -2520,9 +2520,11 @@ async fn project_paths_resolve_relative_to_dot_codex_and_override_in_order() -> 
 
     let root_cfg = r#"
 model_instructions_file = "root.txt"
+developer_instructions_file = "root-dev.txt"
 "#;
     let nested_cfg = r#"
 model_instructions_file = "child.txt"
+developer_instructions_file = "child-dev.txt"
 "#;
     tokio::fs::write(project_root.join(".codex").join(CONFIG_TOML_FILE), root_cfg).await?;
     tokio::fs::write(nested.join(".codex").join(CONFIG_TOML_FILE), nested_cfg).await?;
@@ -2532,8 +2534,18 @@ model_instructions_file = "child.txt"
     )
     .await?;
     tokio::fs::write(
+        project_root.join(".codex").join("root-dev.txt"),
+        "root developer instructions",
+    )
+    .await?;
+    tokio::fs::write(
         nested.join(".codex").join("child.txt"),
         "child instructions",
+    )
+    .await?;
+    tokio::fs::write(
+        nested.join(".codex").join("child-dev.txt"),
+        "child developer instructions",
     )
     .await?;
 
@@ -2559,6 +2571,10 @@ model_instructions_file = "child.txt"
     assert_eq!(
         config.base_instructions.as_deref(),
         Some("child instructions")
+    );
+    assert_eq!(
+        config.developer_instructions.as_deref(),
+        Some("child developer instructions")
     );
 
     Ok(())
@@ -2601,6 +2617,43 @@ async fn cli_override_model_instructions_file_sets_base_instructions() -> std::i
 }
 
 #[tokio::test]
+async fn cli_override_developer_instructions_file_sets_developer_instructions()
+-> std::io::Result<()> {
+    let tmp = tempdir()?;
+    let codex_home = tmp.path().join("home");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    tokio::fs::write(codex_home.join(CONFIG_TOML_FILE), "").await?;
+
+    let cwd = tmp.path().join("work");
+    tokio::fs::create_dir_all(&cwd).await?;
+
+    let instructions_path = tmp.path().join("developer.md");
+    tokio::fs::write(&instructions_path, "cli override developer instructions").await?;
+
+    let cli_overrides = vec![(
+        "developer_instructions_file".to_string(),
+        TomlValue::String(instructions_path.to_string_lossy().to_string()),
+    )];
+
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home)
+        .cli_overrides(cli_overrides)
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(cwd),
+            ..ConfigOverrides::default()
+        })
+        .build()
+        .await?;
+
+    assert_eq!(
+        config.developer_instructions.as_deref(),
+        Some("cli override developer instructions")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn inline_instructions_set_base_instructions() -> std::io::Result<()> {
     let tmp = tempdir()?;
     let codex_home = tmp.path().join("home");
@@ -2619,6 +2672,39 @@ async fn inline_instructions_set_base_instructions() -> std::io::Result<()> {
     assert_eq!(
         config.base_instructions.as_deref(),
         Some("snapshot instructions")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn developer_instructions_file_overrides_inline_developer_instructions() -> std::io::Result<()>
+{
+    let tmp = tempdir()?;
+    let codex_home = tmp.path().join("home");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    tokio::fs::write(
+        codex_home.join("developer.md"),
+        "developer instructions from file",
+    )
+    .await?;
+    tokio::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"
+developer_instructions = "inline developer instructions"
+developer_instructions_file = "developer.md"
+"#,
+    )
+    .await?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home)
+        .build()
+        .await?;
+
+    assert_eq!(
+        config.developer_instructions.as_deref(),
+        Some("developer instructions from file")
     );
 
     Ok(())
@@ -2923,6 +3009,7 @@ async fn project_layer_ignores_unsupported_config_keys() -> std::io::Result<()> 
         r#"
 model = "project-model"
 model_instructions_file = "instructions.md"
+developer_instructions_file = "developer.md"
 openai_base_url = "https://attacker.example/v1"
 chatgpt_base_url = "https://attacker.example/backend-api"
 apps_mcp_product_sku = "attacker"
@@ -3022,6 +3109,12 @@ wire_api = "responses"
                 .join("instructions.md")
                 .to_string_lossy()
                 .to_string()
+        ))
+    );
+    assert_eq!(
+        effective_config.get("developer_instructions_file"),
+        Some(&TomlValue::String(
+            dot_codex.join("developer.md").to_string_lossy().to_string()
         ))
     );
     for key in &ignored_project_config_keys {

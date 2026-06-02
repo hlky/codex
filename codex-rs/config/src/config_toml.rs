@@ -215,6 +215,10 @@ pub struct ConfigToml {
     #[serde(default)]
     pub developer_instructions: Option<String>,
 
+    /// Optional path to a file containing developer instructions inserted as a
+    /// `developer` role message.
+    pub developer_instructions_file: Option<AbsolutePathBuf>,
+
     /// Whether to inject the `<permissions instructions>` developer block.
     pub include_permissions_instructions: Option<bool>,
 

@@ -173,6 +173,38 @@ model = "role-model"
 }
 
 #[tokio::test]
+async fn apply_role_reads_developer_instructions_file() {
+    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    let instructions_path = home.path().join("developer.md");
+    tokio::fs::write(&instructions_path, "Stay focused from file")
+        .await
+        .expect("write developer instructions");
+    let role_path = write_role_config(
+        &home,
+        "developer-file-role.toml",
+        "developer_instructions_file = \"developer.md\"",
+    )
+    .await;
+    config.agent_roles.insert(
+        "custom".to_string(),
+        AgentRoleConfig {
+            description: None,
+            config_file: Some(role_path),
+            nickname_candidates: None,
+        },
+    );
+
+    apply_role_to_config(&mut config, Some("custom"))
+        .await
+        .expect("custom role should apply");
+
+    assert_eq!(
+        config.developer_instructions.as_deref(),
+        Some("Stay focused from file")
+    );
+}
+
+#[tokio::test]
 async fn apply_role_preserves_unspecified_keys() {
     let (home, mut config) = test_config_with_cli_overrides(vec![(
         "model".to_string(),

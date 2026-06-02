@@ -3267,7 +3267,16 @@ impl Config {
         let base_instructions = base_instructions
             .or(file_base_instructions)
             .or(cfg.instructions.clone());
-        let developer_instructions = developer_instructions.or(cfg.developer_instructions);
+        let developer_instructions_path = cfg.developer_instructions_file.as_ref();
+        let file_developer_instructions = Self::try_read_non_empty_file(
+            fs,
+            developer_instructions_path,
+            "developer instructions file",
+        )
+        .await?;
+        let developer_instructions = developer_instructions
+            .or(file_developer_instructions)
+            .or(cfg.developer_instructions);
         let include_permissions_instructions = cfg.include_permissions_instructions.unwrap_or(true);
         let include_apps_instructions = cfg.include_apps_instructions.unwrap_or(true);
         let include_collaboration_mode_instructions =
