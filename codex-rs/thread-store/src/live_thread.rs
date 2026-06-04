@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use codex_git_utils::collect_git_info;
+use codex_git_utils::get_git_repo_root;
 use codex_protocol::ThreadId;
+use codex_protocol::protocol::GitInfo;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_rollout::persisted_rollout_items;
@@ -89,13 +92,18 @@ impl LiveThread {
         params: CreateThreadParams,
     ) -> ThreadStoreResult<Self> {
         let thread_id = params.thread_id;
-        let metadata_sync = ThreadMetadataSync::for_create(&params).await;
+        let cwd = params.metadata.cwd.clone();
+        let metadata_sync = ThreadMetadataSync::for_create(&params);
         thread_store.create_thread(params).await?;
-        Ok(Self {
+        let live_thread = Self {
             thread_id,
             thread_store,
             metadata_sync: Arc::new(Mutex::new(metadata_sync)),
-        })
+        };
+        if let Some(cwd) = cwd {
+            live_thread.spawn_create_git_info_collection(cwd);
+        }
+        Ok(live_thread)
     }
 
     pub async fn resume(
@@ -292,5 +300,43 @@ impl LiveThread {
             .await
             .mark_pending_update_applied(&update);
         Ok(())
+    }
+
+    fn spawn_create_git_info_collection(&self, cwd: PathBuf) {
+        if get_git_repo_root(cwd.as_path()).is_none() {
+            return;
+        }
+        let metadata_sync = Arc::clone(&self.metadata_sync);
+        let thread_store = Arc::clone(&self.thread_store);
+        let thread_id = self.thread_id;
+        tokio::spawn(async move {
+            let Some(git_info) = collect_git_info(cwd.as_path()).await else {
+                return;
+            };
+            let update = metadata_sync.lock().await.observe_create_git_info(GitInfo {
+                commit_hash: git_info.commit_hash,
+                branch: git_info.branch,
+                repository_url: git_info.repository_url,
+            });
+            let Some(update) = update else {
+                return;
+            };
+            match thread_store
+                .update_thread_metadata(UpdateThreadMetadataParams {
+                    thread_id,
+                    patch: update.patch.clone(),
+                    include_archived: true,
+                })
+                .await
+            {
+                Ok(_) => metadata_sync
+                    .lock()
+                    .await
+                    .mark_pending_update_applied(&update),
+                Err(err) => {
+                    warn!("failed to persist background git metadata for thread {thread_id}: {err}")
+                }
+            }
+        });
     }
 }
