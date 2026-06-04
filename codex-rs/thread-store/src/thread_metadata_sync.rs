@@ -4,8 +4,6 @@ use std::time::Instant;
 use chrono::DateTime;
 use chrono::NaiveDateTime;
 use chrono::Utc;
-use codex_git_utils::collect_git_info;
-use codex_git_utils::get_git_repo_root;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GitInfo;
@@ -49,18 +47,9 @@ pub(crate) struct PendingThreadMetadataPatch {
 }
 
 impl ThreadMetadataSync {
-    pub(crate) async fn for_create(params: &CreateThreadParams) -> Self {
+    pub(crate) fn for_create(params: &CreateThreadParams) -> Self {
         let created_at = Utc::now();
         let cwd = params.metadata.cwd.clone().unwrap_or_default();
-        let git_info = if get_git_repo_root(cwd.as_path()).is_some() {
-            collect_git_info(cwd.as_path()).await.map(|info| GitInfo {
-                commit_hash: info.commit_hash,
-                branch: info.branch,
-                repository_url: info.repository_url,
-            })
-        } else {
-            None
-        };
         let update = ThreadMetadataPatch {
             model_provider: Some(params.metadata.model_provider.clone()),
             created_at: Some(created_at),
@@ -72,7 +61,6 @@ impl ThreadMetadataSync {
             agent_path: Some(params.source.get_agent_path().map(Into::into)),
             cwd: Some(cwd.clone()),
             cli_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            git_info: git_info.map(git_info_patch_from_observation),
             memory_mode: Some(params.metadata.memory_mode),
             ..Default::default()
         };
@@ -88,6 +76,17 @@ impl ThreadMetadataSync {
             defer_create_update_until_history_exists: true,
             defer_resume_update_until_append: false,
         }
+    }
+
+    pub(crate) fn observe_create_git_info(
+        &mut self,
+        git_info: GitInfo,
+    ) -> Option<PendingThreadMetadataPatch> {
+        self.merge_pending_update(Some(ThreadMetadataPatch {
+            git_info: Some(git_info_patch_from_observation(git_info)),
+            ..Default::default()
+        }));
+        self.take_pending_update_for_existing_history()
     }
 
     pub(crate) fn for_resume(params: &ResumeThreadParams) -> Self {
@@ -518,6 +517,75 @@ mod tests {
         );
     }
 
+    #[test]
+    fn create_git_info_waits_for_history_before_flushing() {
+        let thread_id = ThreadId::new();
+        let mut sync = ThreadMetadataSync::for_create(&create_params(thread_id));
+
+        assert!(
+            sync.observe_create_git_info(observed_git_info()).is_none(),
+            "create-time git info should not flush before history exists"
+        );
+
+        let update = sync
+            .observe_appended_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(user_message(
+                "new append",
+            )))])
+            .expect("the first append should flush pending create metadata");
+
+        assert_eq!(
+            update.patch.git_info,
+            Some(GitInfoPatch {
+                sha: Some(Some("abcdef".to_string())),
+                branch: Some(Some("main".to_string())),
+                origin_url: Some(Some("https://example.com/repo.git".to_string())),
+            })
+        );
+    }
+
+    #[test]
+    fn create_git_info_flushes_immediately_once_history_exists() {
+        let thread_id = ThreadId::new();
+        let mut sync = ThreadMetadataSync::for_create(&create_params(thread_id));
+        let pending = sync
+            .observe_appended_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(user_message(
+                "new append",
+            )))])
+            .expect("the first append should flush create metadata");
+        sync.mark_pending_update_applied(&pending);
+
+        let update = sync
+            .observe_create_git_info(observed_git_info())
+            .expect("git info should flush once history exists");
+
+        assert_eq!(
+            update.patch.git_info,
+            Some(GitInfoPatch {
+                sha: Some(Some("abcdef".to_string())),
+                branch: Some(Some("main".to_string())),
+                origin_url: Some(Some("https://example.com/repo.git".to_string())),
+            })
+        );
+    }
+
+    fn create_params(thread_id: ThreadId) -> CreateThreadParams {
+        CreateThreadParams {
+            thread_id,
+            forked_from_id: None,
+            parent_thread_id: None,
+            source: SessionSource::Exec,
+            thread_source: None,
+            base_instructions: Default::default(),
+            dynamic_tools: Vec::new(),
+            multi_agent_version: None,
+            metadata: ThreadPersistenceMetadata {
+                cwd: None,
+                model_provider: "test-provider".to_string(),
+                memory_mode: ThreadMemoryMode::Enabled,
+            },
+        }
+    }
+
     fn resume_params(thread_id: ThreadId, history: Vec<RolloutItem>) -> ResumeThreadParams {
         ResumeThreadParams {
             thread_id,
@@ -540,6 +608,14 @@ mod tests {
             local_images: Vec::new(),
             text_elements: Vec::new(),
             ..Default::default()
+        }
+    }
+
+    fn observed_git_info() -> GitInfo {
+        GitInfo {
+            commit_hash: Some(codex_git_utils::GitSha::new("abcdef")),
+            branch: Some("main".to_string()),
+            repository_url: Some("https://example.com/repo.git".to_string()),
         }
     }
 
