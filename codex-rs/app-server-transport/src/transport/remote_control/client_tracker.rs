@@ -1,4 +1,6 @@
+#[cfg(test)]
 use super::CHANNEL_CAPACITY;
+use super::REMOTE_CONTROL_OUTBOUND_CHANNEL_CAPACITY;
 use super::TransportEvent;
 use super::next_connection_id;
 use super::protocol::ClientEnvelope;
@@ -27,7 +29,7 @@ use tracing::warn;
 const REMOTE_CONTROL_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub(crate) const REMOTE_CONTROL_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 #[cfg(not(test))]
-const REMOTE_CONTROL_TRANSPORT_EVENT_SEND_TIMEOUT: Duration = Duration::from_secs(5);
+const REMOTE_CONTROL_TRANSPORT_EVENT_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(test)]
 const REMOTE_CONTROL_TRANSPORT_EVENT_SEND_TIMEOUT: Duration = Duration::from_millis(10);
 
@@ -162,8 +164,9 @@ impl ClientTracker {
                 }
 
                 let connection_id = next_connection_id();
-                let (writer_tx, writer_rx) =
-                    mpsc::channel::<QueuedOutgoingMessage>(CHANNEL_CAPACITY);
+                let (writer_tx, writer_rx) = mpsc::channel::<QueuedOutgoingMessage>(
+                    REMOTE_CONTROL_OUTBOUND_CHANNEL_CAPACITY,
+                );
                 let disconnect_token = self.shutdown_token.child_token();
                 self.send_transport_event(TransportEvent::ConnectionOpened {
                     connection_id,

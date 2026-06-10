@@ -39,6 +39,12 @@ pub(crate) struct ConnectionState {
     pub(crate) session: Arc<ConnectionSessionState>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OutboundBackpressurePolicy {
+    Disconnect,
+    Wait,
+}
+
 impl ConnectionState {
     pub(crate) fn new(
         _origin: ConnectionOrigin,
@@ -56,6 +62,8 @@ impl ConnectionState {
 }
 
 pub(crate) struct OutboundConnectionState {
+    origin: ConnectionOrigin,
+    backpressure_policy: OutboundBackpressurePolicy,
     pub(crate) initialized: Arc<AtomicBool>,
     pub(crate) experimental_api_enabled: Arc<AtomicBool>,
     pub(crate) opted_out_notification_methods: Arc<RwLock<HashSet<String>>>,
@@ -65,13 +73,22 @@ pub(crate) struct OutboundConnectionState {
 
 impl OutboundConnectionState {
     pub(crate) fn new(
+        origin: ConnectionOrigin,
         writer: mpsc::Sender<QueuedOutgoingMessage>,
         initialized: Arc<AtomicBool>,
         experimental_api_enabled: Arc<AtomicBool>,
         opted_out_notification_methods: Arc<RwLock<HashSet<String>>>,
         disconnect_sender: Option<CancellationToken>,
     ) -> Self {
+        let backpressure_policy = match origin {
+            ConnectionOrigin::RemoteControl => OutboundBackpressurePolicy::Wait,
+            ConnectionOrigin::Stdio | ConnectionOrigin::InProcess | ConnectionOrigin::WebSocket => {
+                OutboundBackpressurePolicy::Disconnect
+            }
+        };
         Self {
+            origin,
+            backpressure_policy,
             initialized,
             experimental_api_enabled,
             opted_out_notification_methods,
@@ -82,6 +99,12 @@ impl OutboundConnectionState {
 
     fn can_disconnect(&self) -> bool {
         self.disconnect_sender.is_some()
+    }
+
+    fn queue_depth(&self) -> usize {
+        self.writer
+            .max_capacity()
+            .saturating_sub(self.writer.capacity())
     }
 
     pub(crate) fn request_disconnect(&self) {
@@ -147,12 +170,18 @@ async fn send_message_to_connection(
         message,
         write_complete_tx,
     };
-    if connection_state.can_disconnect() {
+    if connection_state.can_disconnect()
+        && connection_state.backpressure_policy == OutboundBackpressurePolicy::Disconnect
+    {
         match writer.try_send(queued_message) {
             Ok(()) => false,
             Err(mpsc::error::TrySendError::Full(_)) => {
                 warn!(
-                    "disconnecting slow connection after outbound queue filled: {connection_id:?}"
+                    connection_id = ?connection_id,
+                    origin = ?connection_state.origin,
+                    queue_depth = connection_state.queue_depth(),
+                    queue_capacity = writer.max_capacity(),
+                    "disconnecting slow connection after outbound queue filled"
                 );
                 disconnect_connection(connections, connection_id)
             }
@@ -160,10 +189,21 @@ async fn send_message_to_connection(
                 disconnect_connection(connections, connection_id)
             }
         }
-    } else if writer.send(queued_message).await.is_err() {
-        disconnect_connection(connections, connection_id)
     } else {
-        false
+        if connection_state.can_disconnect() && writer.capacity() == 0 {
+            warn!(
+                connection_id = ?connection_id,
+                origin = ?connection_state.origin,
+                queue_depth = connection_state.queue_depth(),
+                queue_capacity = writer.max_capacity(),
+                "applying outbound backpressure instead of disconnecting connection"
+            );
+        }
+        if writer.send(queued_message).await.is_err() {
+            disconnect_connection(connections, connection_id)
+        } else {
+            false
+        }
     }
 }
 

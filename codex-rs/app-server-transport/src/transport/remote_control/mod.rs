@@ -58,6 +58,11 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+pub(super) const REMOTE_CONTROL_OUTBOUND_CHANNEL_CAPACITY: usize = 4 * 1024;
+pub(super) const REMOTE_CONTROL_OUTBOUND_BUFFER_CAPACITY: usize = 4 * 1024;
+const _: () = assert!(REMOTE_CONTROL_OUTBOUND_CHANNEL_CAPACITY > CHANNEL_CAPACITY);
+const _: () = assert!(REMOTE_CONTROL_OUTBOUND_BUFFER_CAPACITY > CHANNEL_CAPACITY);
+
 pub struct RemoteControlStartConfig {
     pub remote_control_url: String,
     pub installation_id: String,

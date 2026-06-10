@@ -1,4 +1,6 @@
 use super::CurrentRemoteControlEnrollment;
+use super::REMOTE_CONTROL_OUTBOUND_BUFFER_CAPACITY;
+use super::REMOTE_CONTROL_OUTBOUND_CHANNEL_CAPACITY;
 use super::RemoteControlPairingPersistenceKey;
 use super::protocol::ClientEnvelope;
 use super::protocol::ClientEvent;
@@ -77,10 +79,18 @@ const REMOTE_CONTROL_WEBSOCKET_CONNECT_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(30);
 const REMOTE_CONTROL_CONNECTION_SHUTDOWN_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(5);
+const REMOTE_CONTROL_ACK_LATENCY_WARN_THRESHOLD: std::time::Duration =
+    std::time::Duration::from_secs(5);
 const REMOTE_APP_SERVER_NOT_FOUND_DETAIL: &str = "Remote app server not found";
 
+#[derive(Clone)]
+struct BufferedServerEnvelope {
+    server_envelope: ServerEnvelope,
+    enqueued_at: tokio::time::Instant,
+}
+
 struct BoundedOutboundBuffer {
-    buffer_by_stream: HashMap<(ClientId, StreamId), VecDeque<ServerEnvelope>>,
+    buffer_by_stream: HashMap<(ClientId, StreamId), VecDeque<BufferedServerEnvelope>>,
     used_tx: watch::Sender<usize>,
 }
 
@@ -101,7 +111,10 @@ impl BoundedOutboundBuffer {
                 server_envelope.stream_id.clone(),
             ))
             .or_default()
-            .push_back(server_envelope.clone());
+            .push_back(BufferedServerEnvelope {
+                server_envelope: server_envelope.clone(),
+                enqueued_at: tokio::time::Instant::now(),
+            });
         self.used_tx.send_modify(|used| *used += 1);
     }
 
@@ -117,26 +130,53 @@ impl BoundedOutboundBuffer {
             return;
         };
         let acked_cursor = (acked_seq_id, acked_segment_id.unwrap_or(usize::MAX));
-        buffer.retain(|server_envelope| {
+        let now = tokio::time::Instant::now();
+        let mut acked_envelopes = 0usize;
+        let mut max_ack_latency = std::time::Duration::ZERO;
+        buffer.retain(|buffered_server_envelope| {
             let envelope_cursor = (
-                server_envelope.seq_id,
-                server_envelope.event.segment_id().unwrap_or_default(),
+                buffered_server_envelope.server_envelope.seq_id,
+                buffered_server_envelope
+                    .server_envelope
+                    .event
+                    .segment_id()
+                    .unwrap_or_default(),
             );
             let is_acked = envelope_cursor <= acked_cursor;
             if is_acked {
+                acked_envelopes += 1;
+                max_ack_latency =
+                    max_ack_latency.max(now.duration_since(buffered_server_envelope.enqueued_at));
                 self.used_tx.send_modify(|used| *used -= 1);
             }
             !is_acked
         });
+        let remaining_unacked_envelopes = *self.used_tx.borrow();
+        if max_ack_latency >= REMOTE_CONTROL_ACK_LATENCY_WARN_THRESHOLD {
+            warn!(
+                client_id = client_id.0.as_str(),
+                stream_id = stream_id.0.as_str(),
+                acked_envelopes,
+                remaining_unacked_envelopes,
+                max_ack_latency = ?max_ack_latency,
+                "remote control client acknowledgements are lagging"
+            );
+        }
         if buffer.is_empty() {
             self.buffer_by_stream.remove(&key);
         }
     }
 
     fn server_envelopes(&self) -> impl Iterator<Item = &ServerEnvelope> {
-        self.buffer_by_stream
-            .values()
-            .flat_map(|buffer| buffer.iter())
+        self.buffer_by_stream.values().flat_map(|buffer| {
+            buffer
+                .iter()
+                .map(|buffered_server_envelope| &buffered_server_envelope.server_envelope)
+        })
+    }
+
+    fn used(&self) -> usize {
+        *self.used_tx.borrow()
     }
 }
 
@@ -392,7 +432,8 @@ impl RemoteControlWebsocket {
         enabled_rx: watch::Receiver<bool>,
     ) -> Self {
         let shutdown_token = shutdown_token.child_token();
-        let (server_event_tx, server_event_rx) = mpsc::channel(super::CHANNEL_CAPACITY);
+        let (server_event_tx, server_event_rx) =
+            mpsc::channel(REMOTE_CONTROL_OUTBOUND_CHANNEL_CAPACITY);
         let client_tracker = ClientTracker::new(
             server_event_tx,
             channels.transport_event_tx,
@@ -853,8 +894,18 @@ impl RemoteControlWebsocket {
         ping_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         let mut server_event_rx = server_event_rx.lock().await;
+        let mut waiting_for_ack_capacity = false;
         loop {
-            let outbound_has_capacity = *used_rx.borrow() < super::CHANNEL_CAPACITY;
+            let outbound_has_capacity = *used_rx.borrow() < REMOTE_CONTROL_OUTBOUND_BUFFER_CAPACITY;
+            if !outbound_has_capacity && !waiting_for_ack_capacity {
+                let unacked_envelopes = state.lock().await.outbound_buffer.used();
+                warn!(
+                    unacked_envelopes,
+                    buffer_capacity = REMOTE_CONTROL_OUTBOUND_BUFFER_CAPACITY,
+                    "remote control outbound buffer is full; waiting for client acknowledgements"
+                );
+                waiting_for_ack_capacity = true;
+            }
             let queued_server_envelope = tokio::select! {
                 _ = shutdown_token.cancelled() => return Ok(()),
                 _ = ping_interval.tick() => {
@@ -875,6 +926,15 @@ impl RemoteControlWebsocket {
                             ErrorKind::UnexpectedEof,
                             "outbound buffer usage channel closed",
                         ));
+                    }
+                    if waiting_for_ack_capacity && *used_rx.borrow() < REMOTE_CONTROL_OUTBOUND_BUFFER_CAPACITY {
+                        let unacked_envelopes = state.lock().await.outbound_buffer.used();
+                        info!(
+                            unacked_envelopes,
+                            buffer_capacity = REMOTE_CONTROL_OUTBOUND_BUFFER_CAPACITY,
+                            "remote control outbound buffer recovered after acknowledgements"
+                        );
+                        waiting_for_ack_capacity = false;
                     }
                     continue;
                 }

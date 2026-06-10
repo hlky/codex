@@ -398,6 +398,7 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
         outbound_connections.insert(
             IN_PROCESS_CONNECTION_ID,
             OutboundConnectionState::new(
+                crate::transport::ConnectionOrigin::InProcess,
                 writer_tx,
                 Arc::clone(&outbound_initialized),
                 Arc::clone(&outbound_experimental_api_enabled),

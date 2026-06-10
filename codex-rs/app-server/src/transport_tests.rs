@@ -34,6 +34,7 @@ async fn to_connection_notification_respects_opt_out_filters() {
     connections.insert(
         connection_id,
         OutboundConnectionState::new(
+            ConnectionOrigin::Stdio,
             writer_tx,
             initialized,
             Arc::new(AtomicBool::new(true)),
@@ -74,6 +75,7 @@ async fn to_connection_notifications_are_dropped_for_opted_out_clients() {
     connections.insert(
         connection_id,
         OutboundConnectionState::new(
+            ConnectionOrigin::Stdio,
             writer_tx,
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
@@ -114,6 +116,7 @@ async fn to_connection_notifications_are_preserved_for_non_opted_out_clients() {
     connections.insert(
         connection_id,
         OutboundConnectionState::new(
+            ConnectionOrigin::Stdio,
             writer_tx,
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
@@ -160,6 +163,7 @@ async fn experimental_notifications_are_dropped_without_capability() {
     connections.insert(
         connection_id,
         OutboundConnectionState::new(
+            ConnectionOrigin::Stdio,
             writer_tx,
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(false)),
@@ -193,6 +197,7 @@ async fn experimental_notifications_are_preserved_with_capability() {
     connections.insert(
         connection_id,
         OutboundConnectionState::new(
+            ConnectionOrigin::Stdio,
             writer_tx,
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
@@ -230,6 +235,7 @@ async fn command_execution_request_approval_strips_additional_permissions_withou
     connections.insert(
         connection_id,
         OutboundConnectionState::new(
+            ConnectionOrigin::Stdio,
             writer_tx,
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(false)),
@@ -295,6 +301,7 @@ async fn command_execution_request_approval_keeps_additional_permissions_with_ca
     connections.insert(
         connection_id,
         OutboundConnectionState::new(
+            ConnectionOrigin::Stdio,
             writer_tx,
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
@@ -375,6 +382,7 @@ async fn broadcast_does_not_block_on_slow_connection() {
     connections.insert(
         fast_connection_id,
         OutboundConnectionState::new(
+            ConnectionOrigin::WebSocket,
             fast_writer_tx,
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
@@ -385,6 +393,7 @@ async fn broadcast_does_not_block_on_slow_connection() {
     connections.insert(
         slow_connection_id,
         OutboundConnectionState::new(
+            ConnectionOrigin::WebSocket,
             slow_writer_tx.clone(),
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
@@ -470,6 +479,7 @@ async fn to_connection_stdio_waits_instead_of_disconnecting_when_writer_queue_is
     connections.insert(
         connection_id,
         OutboundConnectionState::new(
+            ConnectionOrigin::Stdio,
             writer_tx,
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
@@ -506,6 +516,84 @@ async fn to_connection_stdio_waits_instead_of_disconnecting_when_writer_queue_is
         .expect("routing should finish after the first queued message is drained")
         .expect("routing task should succeed");
 
+    assert!(matches!(
+        first.message,
+        OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
+            ConfigWarningNotification { summary, .. }
+        )) if summary == "queued"
+    ));
+    let second = writer_rx
+        .try_recv()
+        .expect("second notification should be delivered once the queue has room");
+    assert!(matches!(
+        second.message,
+        OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
+            ConfigWarningNotification { summary, .. }
+        )) if summary == "second"
+    ));
+}
+
+#[tokio::test]
+async fn to_connection_remote_control_waits_instead_of_disconnecting_when_writer_queue_is_full() {
+    let connection_id = ConnectionId(4);
+    let (writer_tx, mut writer_rx) = mpsc::channel(1);
+    let disconnect_token = CancellationToken::new();
+    writer_tx
+        .send(QueuedOutgoingMessage::new(
+            OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
+                ConfigWarningNotification {
+                    summary: "queued".to_string(),
+                    details: None,
+                    path: None,
+                    range: None,
+                },
+            )),
+        ))
+        .await
+        .expect("channel should accept the first queued message");
+
+    let mut connections = HashMap::new();
+    connections.insert(
+        connection_id,
+        OutboundConnectionState::new(
+            ConnectionOrigin::RemoteControl,
+            writer_tx,
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(RwLock::new(HashSet::new())),
+            Some(disconnect_token.clone()),
+        ),
+    );
+
+    let route_task = tokio::spawn(async move {
+        route_outgoing_envelope(
+            &mut connections,
+            OutgoingEnvelope::ToConnection {
+                connection_id,
+                message: OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
+                    ConfigWarningNotification {
+                        summary: "second".to_string(),
+                        details: None,
+                        path: None,
+                        range: None,
+                    },
+                )),
+                write_complete_tx: None,
+            },
+        )
+        .await
+    });
+
+    let first = timeout(Duration::from_millis(100), writer_rx.recv())
+        .await
+        .expect("first queued message should be readable")
+        .expect("first queued message should exist");
+    timeout(Duration::from_millis(100), route_task)
+        .await
+        .expect("routing should finish after the first queued message is drained")
+        .expect("routing task should succeed");
+
+    assert!(!disconnect_token.is_cancelled());
     assert!(matches!(
         first.message,
         OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
