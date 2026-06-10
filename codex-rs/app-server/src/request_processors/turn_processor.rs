@@ -50,6 +50,8 @@ fn map_additional_context(
 struct ThreadSettingsBuildParams {
     method: &'static str,
     environments: Option<TurnEnvironmentSelections>,
+    local_environment: Option<Option<String>>,
+    turn_local_environment: Option<Option<String>>,
     runtime_workspace_roots: Option<Vec<AbsolutePathBuf>>,
     approval_policy: Option<codex_app_server_protocol::AskForApproval>,
     approvals_reviewer: Option<codex_app_server_protocol::ApprovalsReviewer>,
@@ -442,6 +444,8 @@ impl TurnRequestProcessor {
                 ThreadSettingsBuildParams {
                     method: "turn/start",
                     environments,
+                    local_environment: None,
+                    turn_local_environment: params.local_environment,
                     runtime_workspace_roots: params.runtime_workspace_roots,
                     approval_policy: params.approval_policy,
                     approvals_reviewer: params.approvals_reviewer,
@@ -540,6 +544,8 @@ impl TurnRequestProcessor {
         let ThreadSettingsBuildParams {
             method,
             environments,
+            local_environment,
+            turn_local_environment,
             runtime_workspace_roots,
             approval_policy,
             approvals_reviewer,
@@ -573,6 +579,7 @@ impl TurnRequestProcessor {
         };
 
         let has_any_overrides = has_environment_override
+            || local_environment.is_some()
             || runtime_workspace_roots_request.is_some()
             || approval_policy.is_some()
             || approvals_reviewer.is_some()
@@ -646,6 +653,7 @@ impl TurnRequestProcessor {
             thread
                 .preview_thread_settings_overrides(CodexThreadSettingsOverrides {
                     environments: environments.clone(),
+                    local_environment: local_environment.clone(),
                     workspace_roots: runtime_workspace_roots.clone(),
                     approval_policy,
                     approvals_reviewer,
@@ -669,6 +677,8 @@ impl TurnRequestProcessor {
 
         Ok(codex_protocol::protocol::ThreadSettingsOverrides {
             environments,
+            local_environment,
+            turn_local_environment,
             workspace_roots: runtime_workspace_roots,
             profile_workspace_roots,
             approval_policy,
@@ -705,6 +715,8 @@ impl TurnRequestProcessor {
                 ThreadSettingsBuildParams {
                     method: "thread/settings/update",
                     environments,
+                    local_environment: params.local_environment,
+                    turn_local_environment: None,
                     runtime_workspace_roots: None,
                     approval_policy: params.approval_policy,
                     approvals_reviewer: params.approvals_reviewer,

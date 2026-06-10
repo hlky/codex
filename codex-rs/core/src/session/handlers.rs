@@ -110,6 +110,8 @@ async fn thread_settings_update(
 ) -> SessionSettingsUpdate {
     let ThreadSettingsOverrides {
         environments,
+        local_environment,
+        turn_local_environment,
         workspace_roots,
         profile_workspace_roots,
         approval_policy,
@@ -139,6 +141,8 @@ async fn thread_settings_update(
     };
     SessionSettingsUpdate {
         environments,
+        local_environment,
+        turn_local_environment,
         workspace_roots,
         profile_workspace_roots,
         approval_policy,
@@ -171,6 +175,7 @@ async fn thread_settings_applied_event(sess: &Session) -> EventMsg {
             permission_profile: snapshot.permission_profile,
             active_permission_profile: snapshot.active_permission_profile,
             cwd,
+            local_environment: snapshot.local_environment,
             reasoning_effort: snapshot.reasoning_effort,
             reasoning_summary: snapshot.reasoning_summary,
             personality: snapshot.personality,
@@ -195,7 +200,7 @@ pub(super) async fn user_input_or_turn_inner(
     else {
         unreachable!();
     };
-    let emit_thread_settings_applied = thread_settings != ThreadSettingsOverrides::default();
+    let emit_thread_settings_applied = thread_settings.has_persistent_changes();
     let mut updates = if emit_thread_settings_applied {
         thread_settings_update(sess, thread_settings).await
     } else {

@@ -61,6 +61,7 @@ pub struct ThreadConfigSnapshot {
     pub permission_profile: PermissionProfile,
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub environments: TurnEnvironmentSelections,
+    pub local_environment: Option<String>,
     pub workspace_roots: Vec<AbsolutePathBuf>,
     pub profile_workspace_roots: Vec<AbsolutePathBuf>,
     pub ephemeral: bool,
@@ -135,6 +136,7 @@ impl ThreadConfigSnapshot {
 #[derive(Clone, Default)]
 pub struct CodexThreadSettingsOverrides {
     pub environments: Option<TurnEnvironmentSelections>,
+    pub local_environment: Option<Option<String>>,
     pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     pub profile_workspace_roots: Option<Vec<AbsolutePathBuf>>,
     pub approval_policy: Option<AskForApproval>,
@@ -348,6 +350,7 @@ impl CodexThread {
     ) -> SessionSettingsUpdate {
         let CodexThreadSettingsOverrides {
             environments,
+            local_environment,
             workspace_roots,
             profile_workspace_roots,
             approval_policy,
@@ -375,6 +378,7 @@ impl CodexThread {
 
         SessionSettingsUpdate {
             environments,
+            local_environment,
             workspace_roots,
             profile_workspace_roots,
             approval_policy,

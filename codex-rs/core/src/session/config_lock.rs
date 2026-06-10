@@ -115,6 +115,7 @@ fn save_session_resolved_fields(sc: &SessionConfiguration, lock_config: &mut Con
     lock_config.personality = sc.personality;
     lock_config.approval_policy = Some(sc.approval_policy.value());
     lock_config.approvals_reviewer = Some(sc.approvals_reviewer);
+    lock_config.default_local_environment = sc.local_environment.clone();
 }
 
 /// Saves values stored on `Config` after higher-level resolution,

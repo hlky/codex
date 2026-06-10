@@ -230,6 +230,7 @@ mod tests {
             model: model.to_string(),
             model_provider: "mock_provider".to_string(),
             service_tier: None,
+            local_environment: None,
             effort: None,
             summary: None,
             collaboration_mode: CollaborationMode {

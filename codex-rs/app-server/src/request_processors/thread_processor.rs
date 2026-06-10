@@ -850,6 +850,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            local_environment,
             runtime_workspace_roots,
             approval_policy,
             approvals_reviewer,
@@ -881,6 +882,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            local_environment,
             runtime_workspace_roots,
             approval_policy,
             approvals_reviewer,
@@ -1218,6 +1220,7 @@ impl ThreadRequestProcessor {
             approvals_reviewer: config_snapshot.approvals_reviewer.into(),
             sandbox,
             active_permission_profile,
+            local_environment: config_snapshot.local_environment,
             reasoning_effort: config_snapshot.reasoning_effort,
         };
         let notif = thread_started_notification(thread);
@@ -1253,6 +1256,7 @@ impl ThreadRequestProcessor {
         model_provider: Option<String>,
         service_tier: Option<Option<String>>,
         cwd: Option<String>,
+        local_environment: Option<Option<String>>,
         runtime_workspace_roots: Option<Vec<AbsolutePathBuf>>,
         approval_policy: Option<codex_app_server_protocol::AskForApproval>,
         approvals_reviewer: Option<codex_app_server_protocol::ApprovalsReviewer>,
@@ -1267,6 +1271,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd: cwd.map(PathBuf::from),
+            local_environment,
             workspace_roots: runtime_workspace_roots,
             default_permissions: permissions,
             approval_policy: approval_policy
@@ -2547,6 +2552,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            local_environment,
             runtime_workspace_roots,
             approval_policy,
             approvals_reviewer,
@@ -2589,6 +2595,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            local_environment,
             runtime_workspace_roots,
             approval_policy,
             approvals_reviewer,
@@ -2752,6 +2759,7 @@ impl ThreadRequestProcessor {
                     approvals_reviewer: session_configured.approvals_reviewer.into(),
                     sandbox,
                     active_permission_profile,
+                    local_environment: config_snapshot.local_environment,
                     reasoning_effort: session_configured.reasoning_effort,
                     initial_turns_page,
                 };
@@ -3249,6 +3257,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            local_environment,
             runtime_workspace_roots,
             approval_policy,
             approvals_reviewer,
@@ -3314,6 +3323,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            local_environment,
             runtime_workspace_roots,
             approval_policy,
             approvals_reviewer,
@@ -3467,6 +3477,7 @@ impl ThreadRequestProcessor {
             approvals_reviewer: session_configured.approvals_reviewer.into(),
             sandbox,
             active_permission_profile,
+            local_environment: config_snapshot.local_environment,
             reasoning_effort: session_configured.reasoning_effort,
         };
 

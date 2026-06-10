@@ -169,6 +169,8 @@ fn turn_context_item_filesystem_uses_workspace_roots_instead_of_cwd() {
     let item = TurnContextItem {
         turn_id: None,
         cwd: test_path_buf("/not-the-workspace"),
+        available_local_environments: None,
+        local_environment: None,
         workspace_roots: Some(vec![repo.clone(), other_repo.clone()]),
         current_date: None,
         timezone: None,
@@ -228,6 +230,38 @@ fn serialize_read_only_environment_context() {
 </environment_context>"#;
 
     assert_eq!(context.render(), expected);
+}
+
+#[test]
+fn serialize_environment_context_with_local_environments() {
+    let item = TurnContextItem {
+        turn_id: None,
+        cwd: test_path_buf("/repo"),
+        available_local_environments: Some(vec!["msvc".to_string(), "rocm".to_string()]),
+        local_environment: Some("rocm".to_string()),
+        workspace_roots: None,
+        current_date: None,
+        timezone: None,
+        approval_policy: AskForApproval::Never,
+        sandbox_policy: SandboxPolicy::new_read_only_policy(),
+        permission_profile: None,
+        network: None,
+        file_system_sandbox_policy: None,
+        model: "gpt-5".to_string(),
+        personality: None,
+        collaboration_mode: None,
+        multi_agent_version: None,
+        realtime_active: None,
+        effort: None,
+        summary: codex_protocol::config_types::ReasoningSummary::Auto,
+    };
+
+    let rendered = EnvironmentContext::from_turn_context_item(&item, fake_shell_name()).render();
+    assert!(rendered.contains(&format!("<cwd>{}</cwd>", test_path_buf("/repo").display())));
+    assert!(rendered.contains("<shell>bash</shell>"));
+    assert!(
+        rendered.contains("<local_environments current=\"rocm\">msvc,rocm</local_environments>")
+    );
 }
 
 #[test]

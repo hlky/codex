@@ -638,6 +638,7 @@ pub(super) async fn handle_pending_thread_resume_request(
         permission_profile,
         active_permission_profile,
         workspace_roots,
+        local_environment,
         reasoning_effort,
         ..
     } = config_snapshot;
@@ -660,6 +661,7 @@ pub(super) async fn handle_pending_thread_resume_request(
         approvals_reviewer: approvals_reviewer.into(),
         sandbox,
         active_permission_profile,
+        local_environment,
         reasoning_effort,
         initial_turns_page,
     };

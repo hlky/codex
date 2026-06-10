@@ -194,6 +194,7 @@ fn thread_resume_response_round_trips_initial_turns_page() {
         approvals_reviewer: ApprovalsReviewer::User,
         sandbox: SandboxPolicy::DangerFullAccess,
         active_permission_profile: None,
+        local_environment: Some("rocm".to_string()),
         reasoning_effort: None,
         initial_turns_page: Some(TurnsPage {
             data: Vec::new(),
@@ -3669,6 +3670,7 @@ fn turn_start_params_preserve_explicit_null_service_tier() {
         additional_context: None,
         environments: None,
         cwd: None,
+        local_environment: None,
         runtime_workspace_roots: None,
         approval_policy: None,
         approvals_reviewer: None,
@@ -3685,6 +3687,39 @@ fn turn_start_params_preserve_explicit_null_service_tier() {
     let serialized_without_override =
         serde_json::to_value(&without_override).expect("params should serialize");
     assert_eq!(serialized_without_override.get("serviceTier"), None);
+}
+
+#[test]
+fn turn_start_params_preserve_explicit_null_local_environment() {
+    let params: TurnStartParams = serde_json::from_value(json!({
+        "threadId": "thread_123",
+        "input": [],
+        "localEnvironment": null
+    }))
+    .expect("params should deserialize");
+    assert_eq!(params.local_environment, Some(None));
+
+    let serialized = serde_json::to_value(&params).expect("params should serialize");
+    assert_eq!(
+        serialized.get("localEnvironment"),
+        Some(&serde_json::Value::Null)
+    );
+}
+
+#[test]
+fn thread_settings_update_params_preserve_explicit_null_local_environment() {
+    let params: ThreadSettingsUpdateParams = serde_json::from_value(json!({
+        "threadId": "thread_123",
+        "localEnvironment": null
+    }))
+    .expect("params should deserialize");
+    assert_eq!(params.local_environment, Some(None));
+
+    let serialized = serde_json::to_value(&params).expect("params should serialize");
+    assert_eq!(
+        serialized.get("localEnvironment"),
+        Some(&serde_json::Value::Null)
+    );
 }
 
 #[test]

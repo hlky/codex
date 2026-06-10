@@ -18,6 +18,7 @@ use super::ContextualUserFragment;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct EnvironmentContext {
     pub(crate) environments: EnvironmentContextEnvironments,
+    pub(crate) local_environments: Option<LocalEnvironmentContext>,
     pub(crate) current_date: Option<String>,
     pub(crate) timezone: Option<String>,
     pub(crate) network: Option<NetworkContext>,
@@ -88,6 +89,30 @@ impl EnvironmentContextEnvironments {
                         .all(|(left, right)| left.id == right.id && left.cwd == right.cwd)
             }
             _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalEnvironmentContext {
+    current: Option<String>,
+    available: Vec<String>,
+}
+
+impl LocalEnvironmentContext {
+    fn new(current: Option<String>, available: Vec<String>) -> Option<Self> {
+        (!available.is_empty()).then_some(Self { current, available })
+    }
+
+    fn render(&self) -> String {
+        let available = self.available.join(",");
+        match self.current.as_deref() {
+            Some(current) => {
+                format!(
+                    "<local_environments current=\"{current}\">{available}</local_environments>"
+                )
+            }
+            None => format!("<local_environments>{available}</local_environments>"),
         }
     }
 }
@@ -337,6 +362,7 @@ impl EnvironmentContext {
     ) -> Self {
         Self {
             environments: EnvironmentContextEnvironments::from_vec(environments),
+            local_environments: None,
             current_date,
             timezone,
             network,
@@ -355,6 +381,7 @@ impl EnvironmentContext {
     ) -> Self {
         Self {
             environments,
+            local_environments: None,
             current_date,
             timezone,
             network,
@@ -368,6 +395,7 @@ impl EnvironmentContext {
     /// include the shell, and then it is not configurable from turn to turn.
     pub(crate) fn equals_except_shell(&self, other: &EnvironmentContext) -> bool {
         self.environments.equals_except_shell(&other.environments)
+            && self.local_environments == other.local_environments
             && self.current_date == other.current_date
             && self.timezone == other.timezone
             && self.network == other.network
@@ -381,6 +409,7 @@ impl EnvironmentContext {
     ) -> Self {
         let before_network = Self::network_from_turn_context_item(before);
         let before_filesystem = Self::filesystem_from_turn_context_item(before);
+        let before_local_environments = Self::local_environments_from_turn_context_item(before);
         let environments = match &after.environments {
             EnvironmentContextEnvironments::Single(environment) => {
                 if before.cwd.as_path() != environment.cwd.as_path() {
@@ -407,14 +436,21 @@ impl EnvironmentContext {
         } else {
             before_filesystem
         };
-        EnvironmentContext::new_with_environments(
+        let local_environments = if before_local_environments != after.local_environments {
+            after.local_environments.clone()
+        } else {
+            before_local_environments
+        };
+        let mut context = EnvironmentContext::new_with_environments(
             environments,
             after.current_date.clone(),
             after.timezone.clone(),
             network,
             filesystem,
             /*subagents*/ None,
-        )
+        );
+        context.local_environments = local_environments;
+        context
     }
 
     pub(crate) fn from_turn_context(turn_context: &TurnContext, shell: &Shell) -> Self {
@@ -427,6 +463,10 @@ impl EnvironmentContext {
             turn_context.timezone.clone(),
             Self::network_from_turn_context(turn_context),
             /*subagents*/ None,
+        );
+        context.local_environments = LocalEnvironmentContext::new(
+            turn_context.local_environment.clone(),
+            turn_context.available_local_environments.clone(),
         );
         context.filesystem = Some(FileSystemContext::from_permission_profile(
             &turn_context.permission_profile,
@@ -443,7 +483,7 @@ impl EnvironmentContext {
             Ok(cwd) => cwd,
             Err(_) => AbsolutePathBuf::resolve_path_against_base(&turn_context_item.cwd, "/"),
         };
-        Self::new_with_environments(
+        let mut context = Self::new_with_environments(
             EnvironmentContextEnvironments::from_vec(vec![EnvironmentContextEnvironment::legacy(
                 cwd, shell,
             )]),
@@ -452,7 +492,10 @@ impl EnvironmentContext {
             Self::network_from_turn_context_item(turn_context_item),
             Self::filesystem_from_turn_context_item(turn_context_item),
             /*subagents*/ None,
-        )
+        );
+        context.local_environments =
+            Self::local_environments_from_turn_context_item(turn_context_item);
+        context
     }
 
     pub(crate) fn with_subagents(mut self, subagents: String) -> Self {
@@ -504,6 +547,18 @@ impl EnvironmentContext {
             &turn_context_item.permission_profile(),
             &workspace_roots_from_turn_context_item(turn_context_item),
         ))
+    }
+
+    fn local_environments_from_turn_context_item(
+        turn_context_item: &TurnContextItem,
+    ) -> Option<LocalEnvironmentContext> {
+        LocalEnvironmentContext::new(
+            turn_context_item.local_environment.clone(),
+            turn_context_item
+                .available_local_environments
+                .clone()
+                .unwrap_or_default(),
+        )
     }
 }
 
@@ -568,6 +623,9 @@ impl ContextualUserFragment for EnvironmentContext {
         }
         if let Some(timezone) = &self.timezone {
             lines.push(format!("  <timezone>{timezone}</timezone>"));
+        }
+        if let Some(local_environments) = &self.local_environments {
+            lines.push(format!("  {}", local_environments.render()));
         }
         match &self.network {
             Some(network) => {

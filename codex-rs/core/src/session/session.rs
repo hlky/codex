@@ -80,6 +80,8 @@ pub(crate) struct SessionConfiguration {
     /// Sticky thread-level environment selections plus the legacy cwd used
     /// when a turn does not select an environment.
     pub(super) environments: TurnEnvironmentSelections,
+    /// Sticky selected local command environment for this thread.
+    pub(super) local_environment: Option<String>,
     /// Thread-scoped runtime workspace roots for materializing symbolic
     /// workspace permissions at session runtime.
     pub(super) workspace_roots: Vec<AbsolutePathBuf>,
@@ -114,6 +116,27 @@ impl SessionConfiguration {
 
     pub(super) fn environment_selections(&self) -> &[TurnEnvironmentSelection] {
         &self.environments.environments
+    }
+
+    pub(super) fn validate_local_environment_selection(
+        &self,
+        selection: Option<&str>,
+        field_name: &'static str,
+    ) -> ConstraintResult<()> {
+        if let Some(selection) = selection
+            && !self
+                .original_config_do_not_use
+                .local_environments
+                .contains_key(selection)
+        {
+            return Err(ConstraintError::InvalidValue {
+                field_name,
+                candidate: selection.to_string(),
+                allowed: "configured local environment name".to_string(),
+                requirement_source: codex_config::RequirementSource::Unknown,
+            });
+        }
+        Ok(())
     }
 
     pub(crate) fn codex_home(&self) -> &AbsolutePathBuf {
@@ -183,6 +206,7 @@ impl SessionConfiguration {
             permission_profile: self.permission_profile(),
             active_permission_profile: self.active_permission_profile(),
             environments: self.environments.clone(),
+            local_environment: self.local_environment.clone(),
             workspace_roots: self.workspace_roots.clone(),
             profile_workspace_roots: self.profile_workspace_roots().to_vec(),
             ephemeral: self.original_config_do_not_use.ephemeral,
@@ -253,6 +277,13 @@ impl SessionConfiguration {
         }
         if let Some(windows_sandbox_level) = updates.windows_sandbox_level {
             next_configuration.windows_sandbox_level = windows_sandbox_level;
+        }
+        if let Some(local_environment) = updates.local_environment.as_ref() {
+            next_configuration.validate_local_environment_selection(
+                local_environment.as_deref(),
+                "local_environment",
+            )?;
+            next_configuration.local_environment = local_environment.clone();
         }
 
         let current_cwd = self.cwd().clone();
@@ -411,6 +442,8 @@ impl SessionConfiguration {
 #[derive(Default, Clone)]
 pub(crate) struct SessionSettingsUpdate {
     pub(crate) environments: Option<TurnEnvironmentSelections>,
+    pub(crate) local_environment: Option<Option<String>>,
+    pub(crate) turn_local_environment: Option<Option<String>>,
     pub(crate) workspace_roots: Option<Vec<AbsolutePathBuf>>,
     pub(crate) profile_workspace_roots: Option<Vec<AbsolutePathBuf>>,
     pub(crate) approval_policy: Option<AskForApproval>,

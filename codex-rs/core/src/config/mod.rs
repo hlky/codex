@@ -39,6 +39,7 @@ use codex_config::sandbox_mode_requirement_for_permission_profile;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_config::types::History;
+use codex_config::types::LocalEnvironmentConfig;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerDisabledReason;
 use codex_config::types::McpServerTransportConfig;
@@ -626,6 +627,12 @@ pub struct Config {
 
     /// Effective permission configuration for shell tool execution.
     pub permissions: Permissions,
+
+    /// Named local command environment overlays available to this session.
+    pub local_environments: BTreeMap<String, LocalEnvironmentConfig>,
+
+    /// Default selected local environment for new threads in this session.
+    pub default_local_environment: Option<String>,
 
     /// Whether config explicitly selected named permissions profiles instead
     /// of the legacy `sandbox_mode` syntax.
@@ -2254,6 +2261,7 @@ pub struct ConfigOverrides {
     pub base_instructions: Option<String>,
     pub developer_instructions: Option<String>,
     pub personality: Option<Personality>,
+    pub local_environment: Option<Option<String>>,
     pub compact_prompt: Option<String>,
     pub show_raw_agent_reasoning: Option<bool>,
     pub tools_web_search_request: Option<bool>,
@@ -2634,6 +2642,7 @@ impl Config {
             base_instructions,
             developer_instructions,
             personality,
+            local_environment,
             compact_prompt,
             show_raw_agent_reasoning,
             tools_web_search_request: override_tools_web_search_request,
@@ -3075,6 +3084,20 @@ impl Config {
             .clone();
 
         let shell_environment_policy = cfg.shell_environment_policy.into();
+        let local_environments = cfg
+            .local_environments
+            .into_iter()
+            .map(|(name, environment)| (name, environment.into()))
+            .collect::<BTreeMap<_, _>>();
+        let default_local_environment = local_environment.unwrap_or(cfg.default_local_environment);
+        if let Some(name) = default_local_environment.as_ref()
+            && !local_environments.contains_key(name)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("default_local_environment refers to unknown local environment `{name}`"),
+            ));
+        }
         let allow_login_shell = cfg.allow_login_shell.unwrap_or(true);
 
         let history = cfg.history.unwrap_or_default();
@@ -3447,6 +3470,8 @@ impl Config {
                 windows_sandbox_mode,
                 windows_sandbox_private_desktop,
             },
+            local_environments,
+            default_local_environment,
             explicit_permission_profile_mode,
             custom_permission_profiles,
             approvals_reviewer: constrained_approvals_reviewer.value(),

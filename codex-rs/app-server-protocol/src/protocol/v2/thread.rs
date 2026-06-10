@@ -109,6 +109,17 @@ pub struct ThreadStartParams {
     pub service_tier: Option<Option<String>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Sticky selected local command environment for this thread. `null`
+    /// clears any configured default for the new thread.
+    #[experimental("thread/start.localEnvironment")]
+    #[serde(
+        default,
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional = nullable)]
+    pub local_environment: Option<Option<String>>,
     /// Replace the thread's runtime workspace roots. Paths must be absolute.
     #[experimental("thread/start.runtimeWorkspaceRoots")]
     #[ts(optional = nullable)]
@@ -217,6 +228,9 @@ pub struct ThreadStartResponse {
     #[experimental("thread/start.activePermissionProfile")]
     #[serde(default)]
     pub active_permission_profile: Option<ActivePermissionProfile>,
+    #[experimental("thread/start.localEnvironment")]
+    #[serde(default)]
+    pub local_environment: Option<String>,
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
@@ -230,6 +244,17 @@ pub struct ThreadSettingsUpdateParams {
     /// Override the working directory for subsequent turns.
     #[ts(optional = nullable)]
     pub cwd: Option<PathBuf>,
+    /// Override the sticky selected local command environment for subsequent
+    /// turns. `null` clears it.
+    #[experimental("thread/settings/update.localEnvironment")]
+    #[serde(
+        default,
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional = nullable)]
+    pub local_environment: Option<Option<String>>,
     /// Override the approval policy for subsequent turns.
     #[experimental(nested)]
     #[ts(optional = nullable)]
@@ -286,6 +311,8 @@ pub struct ThreadSettingsUpdateResponse {}
 #[ts(export_to = "v2/")]
 pub struct ThreadSettings {
     pub cwd: AbsolutePathBuf,
+    #[serde(default)]
+    pub local_environment: Option<String>,
     pub approval_policy: AskForApproval,
     pub approvals_reviewer: ApprovalsReviewer,
     pub sandbox_policy: SandboxPolicy,
@@ -363,6 +390,17 @@ pub struct ThreadResumeParams {
     pub service_tier: Option<Option<String>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Sticky selected local command environment for the resumed thread.
+    /// `null` clears any configured default.
+    #[experimental("thread/resume.localEnvironment")]
+    #[serde(
+        default,
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional = nullable)]
+    pub local_environment: Option<Option<String>>,
     /// Replace the thread's runtime workspace roots. Paths must be absolute.
     #[experimental("thread/resume.runtimeWorkspaceRoots")]
     #[ts(optional = nullable)]
@@ -431,6 +469,9 @@ pub struct ThreadResumeResponse {
     #[experimental("thread/resume.activePermissionProfile")]
     #[serde(default)]
     pub active_permission_profile: Option<ActivePermissionProfile>,
+    #[experimental("thread/resume.localEnvironment")]
+    #[serde(default)]
+    pub local_environment: Option<String>,
     pub reasoning_effort: Option<ReasoningEffort>,
     /// `thread/turns/list` page returned when requested by `initialTurnsPage`.
     #[experimental("thread/resume.initialTurnsPage")]
@@ -513,6 +554,17 @@ pub struct ThreadForkParams {
     pub service_tier: Option<Option<String>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Sticky selected local command environment for the forked thread.
+    /// `null` clears any configured default.
+    #[experimental("thread/fork.localEnvironment")]
+    #[serde(
+        default,
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional = nullable)]
+    pub local_environment: Option<Option<String>>,
     /// Replace the thread's runtime workspace roots. Paths must be absolute.
     #[experimental("thread/fork.runtimeWorkspaceRoots")]
     #[ts(optional = nullable)]
@@ -579,6 +631,9 @@ pub struct ThreadForkResponse {
     #[experimental("thread/fork.activePermissionProfile")]
     #[serde(default)]
     pub active_permission_profile: Option<ActivePermissionProfile>,
+    #[experimental("thread/fork.localEnvironment")]
+    #[serde(default)]
+    pub local_environment: Option<String>,
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 

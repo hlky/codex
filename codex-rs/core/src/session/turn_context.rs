@@ -52,6 +52,19 @@ impl TurnEnvironment {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TurnLocalEnvironmentState {
+    pub(crate) available: Vec<String>,
+    pub(crate) selected: Option<String>,
+}
+
+struct TurnBuildOptions {
+    final_output_json_schema: Option<Option<Value>>,
+    turn_local_environment: Option<Option<String>>,
+    local_environment_state: TurnLocalEnvironmentState,
+    multi_agent_runtime: TurnMultiAgentRuntime,
+}
+
 /// The context needed for a single turn of the thread.
 #[derive(Debug)]
 pub struct TurnContext {
@@ -89,6 +102,8 @@ pub struct TurnContext {
     pub(crate) permission_profile: PermissionProfile,
     pub(crate) network: Option<NetworkProxy>,
     pub(crate) windows_sandbox_level: WindowsSandboxLevel,
+    pub(crate) available_local_environments: Vec<String>,
+    pub(crate) local_environment: Option<String>,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) available_models: Vec<ModelPreset>,
     pub(crate) unified_exec_shell_mode: UnifiedExecShellMode,
@@ -110,6 +125,25 @@ pub struct TurnContext {
 enum TurnMultiAgentRuntime {
     ResolveAndStore,
     Preview,
+}
+
+fn configured_local_environment_names(config: &Config) -> Vec<String> {
+    config.local_environments.keys().cloned().collect()
+}
+
+fn fallback_local_environment_state(
+    config: &Config,
+    error: &anyhow::Error,
+    scope: &str,
+) -> TurnLocalEnvironmentState {
+    warn!(
+        error = %error,
+        "validated {scope} local environment selection became invalid; ignoring selection"
+    );
+    TurnLocalEnvironmentState {
+        available: configured_local_environment_names(config),
+        selected: None,
+    }
 }
 
 impl TurnContext {
@@ -258,6 +292,8 @@ impl TurnContext {
             permission_profile: self.permission_profile.clone(),
             network: self.network.clone(),
             windows_sandbox_level: self.windows_sandbox_level,
+            available_local_environments: self.available_local_environments.clone(),
+            local_environment: self.local_environment.clone(),
             shell_environment_policy: self.shell_environment_policy.clone(),
             available_models,
             unified_exec_shell_mode: self.unified_exec_shell_mode.clone(),
@@ -348,6 +384,9 @@ impl TurnContext {
             turn_id: Some(self.sub_id.clone()),
             #[allow(deprecated)]
             cwd: self.cwd.to_path_buf(),
+            available_local_environments: (!self.available_local_environments.is_empty())
+                .then_some(self.available_local_environments.clone()),
+            local_environment: self.local_environment.clone(),
             workspace_roots: (!workspace_roots.is_empty()).then_some(workspace_roots),
             current_date: self.current_date.clone(),
             timezone: self.timezone.clone(),
@@ -399,6 +438,28 @@ fn local_time_context() -> (String, String) {
     }
 }
 
+fn resolve_turn_local_environment_state(
+    config: &Config,
+    sticky_local_environment: Option<String>,
+    turn_local_environment: Option<Option<String>>,
+) -> anyhow::Result<TurnLocalEnvironmentState> {
+    let available = config
+        .local_environments
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let selected = turn_local_environment.unwrap_or(sticky_local_environment);
+    if let Some(selected) = selected.as_ref()
+        && !config.local_environments.contains_key(selected)
+    {
+        anyhow::bail!("unknown local environment `{selected}`");
+    }
+    Ok(TurnLocalEnvironmentState {
+        available,
+        selected,
+    })
+}
+
 impl Session {
     /// Don't expand the number of mutated arguments on config. We are in the process of getting rid of it.
     pub(crate) fn build_per_turn_config(
@@ -418,6 +479,7 @@ impl Session {
         per_turn_config.model_reasoning_summary = session_configuration.model_reasoning_summary;
         per_turn_config.service_tier = session_configuration.service_tier.clone();
         per_turn_config.personality = session_configuration.personality;
+        per_turn_config.default_local_environment = session_configuration.local_environment.clone();
         per_turn_config.approvals_reviewer = session_configuration.approvals_reviewer;
         session_configuration
             .apply_permission_profile_to_permissions(&mut per_turn_config.permissions);
@@ -448,6 +510,7 @@ impl Session {
         config.model = Some(session_configuration.collaboration_mode.model().to_string());
         config.permissions.approval_policy = session_configuration.approval_policy.clone();
         config.workspace_roots = session_configuration.workspace_roots.clone();
+        config.default_local_environment = session_configuration.local_environment.clone();
         config
             .permissions
             .set_workspace_roots(session_configuration.workspace_roots.clone());
@@ -472,6 +535,7 @@ impl Session {
         network: Option<NetworkProxy>,
         environments: ResolvedTurnEnvironments,
         cwd: AbsolutePathBuf,
+        local_environment_state: TurnLocalEnvironmentState,
         sub_id: String,
         skills_outcome: Arc<SkillLoadOutcome>,
     ) -> TurnContext {
@@ -562,6 +626,8 @@ impl Session {
             permission_profile: session_configuration.permission_profile(),
             network,
             windows_sandbox_level: session_configuration.windows_sandbox_level,
+            available_local_environments: local_environment_state.available,
+            local_environment: local_environment_state.selected,
             shell_environment_policy: per_turn_config.permissions.shell_environment_policy.clone(),
             available_models,
             unified_exec_shell_mode,
@@ -599,6 +665,12 @@ impl Session {
                     let next_permission_profile = next.permission_profile();
                     let permission_profile_changed =
                         previous_permission_profile != next_permission_profile;
+                    let local_environment_state = resolve_turn_local_environment_state(
+                        next.original_config_do_not_use.as_ref(),
+                        next.local_environment.clone(),
+                        updates.turn_local_environment.clone(),
+                    )
+                    .map_err(|err| CodexErr::InvalidRequest(err.to_string()))?;
                     let codex_home = next.codex_home.clone();
                     let session_source = next.session_source.clone();
                     let previous_config = notify_config_contributors.then(|| {
@@ -612,6 +684,7 @@ impl Session {
                         turn_environments,
                         permission_profile_changed,
                         previous_cwd,
+                        local_environment_state,
                         codex_home,
                         session_source,
                         previous_config,
@@ -627,6 +700,7 @@ impl Session {
             turn_environments,
             permission_profile_changed,
             previous_cwd,
+            local_environment_state,
             codex_home,
             session_source,
             previous_config,
@@ -666,6 +740,8 @@ impl Session {
                 session_configuration,
                 updates.final_output_json_schema,
                 turn_environments,
+                updates.turn_local_environment,
+                local_environment_state,
             )
             .await)
     }
@@ -686,13 +762,19 @@ impl Session {
         session_configuration: SessionConfiguration,
         final_output_json_schema: Option<Option<Value>>,
         turn_environments: ResolvedTurnEnvironments,
+        turn_local_environment: Option<Option<String>>,
+        local_environment_state: TurnLocalEnvironmentState,
     ) -> Arc<TurnContext> {
         self.new_turn_context_from_configuration(
             sub_id,
             session_configuration,
-            final_output_json_schema,
             turn_environments,
-            TurnMultiAgentRuntime::ResolveAndStore,
+            TurnBuildOptions {
+                final_output_json_schema,
+                turn_local_environment,
+                local_environment_state,
+                multi_agent_runtime: TurnMultiAgentRuntime::ResolveAndStore,
+            },
         )
         .await
     }
@@ -703,12 +785,28 @@ impl Session {
         session_configuration: SessionConfiguration,
         turn_environments: ResolvedTurnEnvironments,
     ) -> Arc<TurnContext> {
+        let local_environment_state = match resolve_turn_local_environment_state(
+            session_configuration.original_config_do_not_use.as_ref(),
+            session_configuration.local_environment.clone(),
+            /*turn_local_environment*/ None,
+        ) {
+            Ok(state) => state,
+            Err(err) => fallback_local_environment_state(
+                session_configuration.original_config_do_not_use.as_ref(),
+                &err,
+                "startup",
+            ),
+        };
         self.new_turn_context_from_configuration(
             sub_id,
             session_configuration,
-            /*final_output_json_schema*/ None,
             turn_environments,
-            TurnMultiAgentRuntime::Preview,
+            TurnBuildOptions {
+                final_output_json_schema: None,
+                turn_local_environment: None,
+                local_environment_state,
+                multi_agent_runtime: TurnMultiAgentRuntime::Preview,
+            },
         )
         .await
     }
@@ -717,16 +815,33 @@ impl Session {
         &self,
         sub_id: String,
         session_configuration: SessionConfiguration,
-        final_output_json_schema: Option<Option<Value>>,
         turn_environments: ResolvedTurnEnvironments,
-        multi_agent_runtime: TurnMultiAgentRuntime,
+        turn_build_options: TurnBuildOptions,
     ) -> Arc<TurnContext> {
         let primary_turn_environment = turn_environments.primary().cloned();
         let cwd = primary_turn_environment
             .as_ref()
             .map(|turn_environment| turn_environment.cwd.clone())
             .unwrap_or_else(|| session_configuration.cwd().clone());
-        let per_turn_config = Self::build_per_turn_config(&session_configuration, cwd.clone());
+        let mut per_turn_config = Self::build_per_turn_config(&session_configuration, cwd.clone());
+        let selected_local_environment = turn_build_options
+            .turn_local_environment
+            .clone()
+            .unwrap_or_else(|| turn_build_options.local_environment_state.selected.clone());
+        if let Some(selected_local_environment) = selected_local_environment.as_ref() {
+            if let Some(local_environment) = per_turn_config
+                .local_environments
+                .get(selected_local_environment)
+            {
+                per_turn_config.permissions.shell_environment_policy =
+                    local_environment.shell_environment_policy.clone();
+            } else {
+                warn!(
+                    local_environment = selected_local_environment,
+                    "validated local environment selection disappeared before turn construction"
+                );
+            }
+        }
         {
             let mcp_connection_manager = self.services.mcp_connection_manager.load_full();
             mcp_connection_manager.set_approval_policy(&session_configuration.approval_policy);
@@ -743,7 +858,7 @@ impl Session {
             )
             .await;
 
-        let multi_agent_version = match multi_agent_runtime {
+        let multi_agent_version = match turn_build_options.multi_agent_runtime {
             TurnMultiAgentRuntime::ResolveAndStore => {
                 self.resolve_multi_agent_version_for_model(&model_info, &per_turn_config)
             }
@@ -793,12 +908,13 @@ impl Session {
                 }),
             turn_environments,
             cwd,
+            turn_build_options.local_environment_state,
             sub_id,
             skills_outcome,
         );
         turn_context.realtime_active = self.conversation.running_state().await.is_some();
 
-        if let Some(final_schema) = final_output_json_schema {
+        if let Some(final_schema) = turn_build_options.final_output_json_schema {
             turn_context.final_output_json_schema = final_schema;
         }
         let turn_context = Arc::new(turn_context);
@@ -835,11 +951,25 @@ impl Session {
     pub(crate) async fn new_default_turn_with_sub_id(&self, sub_id: String) -> Arc<TurnContext> {
         let (session_configuration, turn_environments) =
             self.default_turn_configuration_and_environments().await;
+        let local_environment_state = match resolve_turn_local_environment_state(
+            session_configuration.original_config_do_not_use.as_ref(),
+            session_configuration.local_environment.clone(),
+            /*turn_local_environment*/ None,
+        ) {
+            Ok(state) => state,
+            Err(err) => fallback_local_environment_state(
+                session_configuration.original_config_do_not_use.as_ref(),
+                &err,
+                "default",
+            ),
+        };
         self.new_turn_from_configuration(
             sub_id,
             session_configuration,
             /*final_output_json_schema*/ None,
             turn_environments,
+            /*turn_local_environment*/ None,
+            local_environment_state,
         )
         .await
     }
@@ -876,3 +1006,7 @@ impl Session {
         (session_configuration, turn_environments)
     }
 }
+
+#[cfg(test)]
+#[path = "turn_context_tests.rs"]
+mod tests;

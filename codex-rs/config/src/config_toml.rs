@@ -13,6 +13,7 @@ use crate::types::AppsConfigToml;
 use crate::types::AuthCredentialsStoreMode;
 use crate::types::FeedbackConfigToml;
 use crate::types::History;
+use crate::types::LocalEnvironmentToml;
 use crate::types::MarketplaceConfig;
 use crate::types::McpServerConfig;
 use crate::types::MemoriesToml;
@@ -169,6 +170,13 @@ pub struct ConfigToml {
 
     #[serde(default)]
     pub shell_environment_policy: ShellEnvironmentPolicyToml,
+
+    /// Named local command environment overlays available to this session.
+    #[serde(default)]
+    pub local_environments: BTreeMap<String, LocalEnvironmentToml>,
+
+    /// Default selected named local environment for new threads.
+    pub default_local_environment: Option<String>,
 
     /// Whether the model may request a login shell for shell-based tools.
     /// Default to `true`

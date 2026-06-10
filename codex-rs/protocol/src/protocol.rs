@@ -405,6 +405,20 @@ pub struct ThreadSettingsOverrides {
     /// Updated fallback `cwd` and environments supplied together as a complete pair.
     pub environments: Option<TurnEnvironmentSelections>,
 
+    /// Updated sticky local environment selection for subsequent turns.
+    ///
+    /// Use `Some(Some(_))` to select a named local environment, `Some(None)`
+    /// to clear the sticky selection, or `None` to leave it unchanged.
+    pub local_environment: Option<Option<String>>,
+
+    /// Turn-scoped local environment override that does not persist to
+    /// subsequent turns.
+    ///
+    /// Use `Some(Some(_))` to select a named local environment for this turn,
+    /// `Some(None)` to force no local environment for this turn, or `None` to
+    /// use the sticky thread selection.
+    pub turn_local_environment: Option<Option<String>>,
+
     /// Updated runtime workspace roots used to materialize symbolic
     /// `:workspace_roots` filesystem permissions.
     pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
@@ -456,6 +470,46 @@ pub struct ThreadSettingsOverrides {
 
     /// Updated personality preference.
     pub personality: Option<Personality>,
+}
+
+impl ThreadSettingsOverrides {
+    pub fn has_persistent_changes(&self) -> bool {
+        let Self {
+            environments,
+            local_environment,
+            turn_local_environment: _,
+            workspace_roots,
+            profile_workspace_roots,
+            approval_policy,
+            approvals_reviewer,
+            sandbox_policy,
+            permission_profile,
+            active_permission_profile,
+            windows_sandbox_level,
+            model,
+            effort,
+            summary,
+            service_tier,
+            collaboration_mode,
+            personality,
+        } = self;
+        environments.is_some()
+            || local_environment.is_some()
+            || workspace_roots.is_some()
+            || profile_workspace_roots.is_some()
+            || approval_policy.is_some()
+            || approvals_reviewer.is_some()
+            || sandbox_policy.is_some()
+            || permission_profile.is_some()
+            || active_permission_profile.is_some()
+            || windows_sandbox_level.is_some()
+            || model.is_some()
+            || effort.is_some()
+            || summary.is_some()
+            || service_tier.is_some()
+            || collaboration_mode.is_some()
+            || personality.is_some()
+    }
 }
 
 /// Source classification for client-supplied context.
@@ -1925,6 +1979,9 @@ pub struct ThreadSettingsSnapshot {
     #[ts(optional)]
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub cwd: AbsolutePathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub local_environment: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffortConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2924,6 +2981,10 @@ pub struct TurnContextItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
     pub cwd: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_local_environments: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_environment: Option<String>,
     /// Effective workspace roots used to materialize symbolic
     /// `:workspace_roots` filesystem permissions in `permission_profile`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

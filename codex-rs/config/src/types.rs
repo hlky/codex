@@ -903,6 +903,30 @@ impl From<SandboxWorkspaceWrite> for codex_app_server_protocol::SandboxSettings 
     }
 }
 
+/// Static config for a named local command environment overlay.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct LocalEnvironmentToml {
+    pub description: Option<String>,
+    pub shell_environment_policy: ShellEnvironmentPolicyToml,
+}
+
+/// Effective runtime configuration for a named local command environment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalEnvironmentConfig {
+    pub description: Option<String>,
+    pub shell_environment_policy: ShellEnvironmentPolicy,
+}
+
+impl From<LocalEnvironmentToml> for LocalEnvironmentConfig {
+    fn from(toml: LocalEnvironmentToml) -> Self {
+        Self {
+            description: toml.description,
+            shell_environment_policy: toml.shell_environment_policy.into(),
+        }
+    }
+}
+
 /// Policy for building the `env` when spawning a process via shell-like tools.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]

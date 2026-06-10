@@ -1217,6 +1217,22 @@
       ],
       "description": "One action binding value in config.\n\nThis accepts either:\n\n1. A single key spec string (`\"ctrl-a\"`). 2. A list of key spec strings (`[\"ctrl-a\", \"alt-a\"]`).\n\nAn empty list explicitly unbinds the action in that scope. Because an explicit empty list is still a configured value, runtime resolution must not fall through to global or built-in defaults for that action."
     },
+    "LocalEnvironmentToml": {
+      "additionalProperties": false,
+      "description": "Static config for a named local command environment overlay.",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "shell_environment_policy": {
+          "$ref": "#/definitions/ShellEnvironmentPolicyToml"
+        }
+      },
+      "required": [
+        "shell_environment_policy"
+      ],
+      "type": "object"
+    },
     "MarketplaceConfig": {
       "additionalProperties": false,
       "properties": {
@@ -4462,6 +4478,10 @@
       ],
       "description": "Debugging and reproducibility settings."
     },
+    "default_local_environment": {
+      "description": "Default selected named local environment for new threads.",
+      "type": "string"
+    },
     "default_permissions": {
       "description": "Default permissions profile to apply. Names starting with `:` refer to built-in profiles; other names are resolved from the `[permissions]` table.",
       "type": "string"
@@ -4903,6 +4923,14 @@
     "instructions": {
       "description": "System instructions.",
       "type": "string"
+    },
+    "local_environments": {
+      "additionalProperties": {
+        "$ref": "#/definitions/LocalEnvironmentToml"
+      },
+      "default": {},
+      "description": "Named local command environment overlays available to this session.",
+      "type": "object"
     },
     "log_dir": {
       "allOf": [

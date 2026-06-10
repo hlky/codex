@@ -616,6 +616,7 @@ impl Codex {
                 config.cwd.clone(),
                 environment_selections.to_selections(),
             ),
+            local_environment: config.default_local_environment.clone(),
             workspace_roots: config.workspace_roots.clone(),
             codex_home: config.codex_home.clone(),
             thread_name: None,

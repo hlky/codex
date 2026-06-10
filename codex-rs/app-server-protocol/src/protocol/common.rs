@@ -2491,6 +2491,7 @@ mod tests {
                 approvals_reviewer: v2::ApprovalsReviewer::User,
                 sandbox: v2::SandboxPolicy::DangerFullAccess,
                 active_permission_profile: None,
+                local_environment: Some("msvc".to_string()),
                 reasoning_effort: None,
             },
         };
@@ -2538,6 +2539,7 @@ mod tests {
                         "type": "dangerFullAccess"
                     },
                     "activePermissionProfile": null,
+                    "localEnvironment": "msvc",
                     "reasoningEffort": null
                 }
             }),
@@ -3340,6 +3342,7 @@ mod tests {
                 thread_id: "thr_123".to_string(),
                 thread_settings: v2::ThreadSettings {
                     cwd: absolute_path("/tmp/repo"),
+                    local_environment: Some("rocm".to_string()),
                     approval_policy: v2::AskForApproval::Never,
                     approvals_reviewer: v2::ApprovalsReviewer::User,
                     sandbox_policy: v2::SandboxPolicy::DangerFullAccess,

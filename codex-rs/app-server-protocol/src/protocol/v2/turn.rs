@@ -87,6 +87,17 @@ pub struct TurnStartParams {
     /// Override the working directory for this turn and subsequent turns.
     #[ts(optional = nullable)]
     pub cwd: Option<PathBuf>,
+    /// Override the local command environment for this turn only. `null`
+    /// forces no local environment for this turn.
+    #[experimental("turn/start.localEnvironment")]
+    #[serde(
+        default,
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional = nullable)]
+    pub local_environment: Option<Option<String>>,
     /// Replace the thread's runtime workspace roots for this turn and
     /// subsequent turns. Paths must be absolute.
     #[experimental("turn/start.runtimeWorkspaceRoots")]

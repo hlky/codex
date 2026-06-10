@@ -37,6 +37,7 @@ use codex_config::types::ApprovalsReviewer;
 use codex_config::types::BundledSkillsConfig;
 use codex_config::types::FeedbackConfigToml;
 use codex_config::types::HistoryPersistence;
+use codex_config::types::LocalEnvironmentToml;
 use codex_config::types::McpServerEnvVar;
 use codex_config::types::McpServerOAuthConfig;
 use codex_config::types::McpServerToolConfig;
@@ -52,6 +53,7 @@ use codex_config::types::OtelConfigToml;
 use codex_config::types::OtelExporterKind;
 use codex_config::types::SandboxWorkspaceWrite;
 use codex_config::types::SessionPickerViewMode;
+use codex_config::types::ShellEnvironmentPolicyToml;
 use codex_config::types::SkillsConfig;
 use codex_config::types::ToolSuggestDisabledTool;
 use codex_config::types::ToolSuggestDiscoverableType;
@@ -72,6 +74,7 @@ use codex_models_manager::bundled_models_response;
 use codex_network_proxy::NetworkMode;
 use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
@@ -203,6 +206,83 @@ async fn load_config_normalizes_relative_cwd_override() -> std::io::Result<()> {
 
     assert_eq!(config.cwd, expected_cwd);
     Ok(())
+}
+
+#[tokio::test]
+async fn load_config_loads_named_local_environments_and_default_selection() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            local_environments: BTreeMap::from([(
+                "msvc".to_string(),
+                LocalEnvironmentToml {
+                    description: Some("MSVC toolchain".to_string()),
+                    shell_environment_policy: ShellEnvironmentPolicyToml {
+                        inherit: Some(ShellEnvironmentPolicyInherit::None),
+                        ignore_default_excludes: Some(true),
+                        include_only: Some(Vec::new()),
+                        exclude: Some(Vec::new()),
+                        r#set: Some(HashMap::from([("CC".to_string(), "cl.exe".to_string())])),
+                        experimental_use_profile: Some(false),
+                    },
+                },
+            )]),
+            default_local_environment: Some("msvc".to_string()),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.default_local_environment.as_deref(), Some("msvc"));
+    assert_eq!(
+        config.local_environments.keys().collect::<Vec<_>>(),
+        vec![&"msvc".to_string()]
+    );
+    let local_environment = config
+        .local_environments
+        .get("msvc")
+        .expect("msvc local environment should load");
+    assert_eq!(
+        local_environment.description.as_deref(),
+        Some("MSVC toolchain")
+    );
+    assert_eq!(
+        local_environment.shell_environment_policy.inherit,
+        ShellEnvironmentPolicyInherit::None
+    );
+    assert!(
+        local_environment
+            .shell_environment_policy
+            .ignore_default_excludes
+    );
+    assert_eq!(
+        local_environment.shell_environment_policy.r#set.get("CC"),
+        Some(&"cl.exe".to_string())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_config_rejects_unknown_default_local_environment() {
+    let codex_home = tempdir().expect("tempdir");
+    let err = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            default_local_environment: Some("missing".to_string()),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await
+    .expect_err("unknown local environment should fail");
+
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("default_local_environment refers to unknown local environment `missing`"),
+        "{msg}"
+    );
 }
 
 #[tokio::test]

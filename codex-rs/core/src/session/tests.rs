@@ -1,8 +1,10 @@
 use super::turn_context::TurnEnvironment;
+use super::turn_context::TurnLocalEnvironmentState;
 use super::*;
 use crate::codex_thread::TryStartTurnIfIdleRejectionReason;
 use crate::config::ConfigBuilder;
 use crate::config::ConfigOverrides;
+use crate::config::ConstraintError;
 use crate::config::test_config;
 use crate::context::ContextualUserFragment;
 use crate::context::TurnAborted;
@@ -21,6 +23,7 @@ use codex_config::NetworkDomainPermissionsToml;
 use codex_config::RequirementSource;
 use codex_config::Sourced;
 use codex_config::loader::project_trust_key;
+use codex_config::types::LocalEnvironmentConfig;
 use codex_config::types::ToolSuggestDisabledTool;
 use core_test_support::test_codex::local_selections;
 
@@ -36,6 +39,8 @@ use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::config_types::ShellEnvironmentPolicy;
+use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::models::ActivePermissionProfile;
@@ -2660,6 +2665,8 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         turn_id: Some(turn_context.sub_id.clone()),
         #[allow(deprecated)]
         cwd: turn_context.cwd.to_path_buf(),
+        available_local_environments: None,
+        local_environment: None,
         workspace_roots: None,
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
@@ -3299,6 +3306,7 @@ async fn set_rate_limits_retains_previous_credits() {
         permission_profile_state: config.permissions.permission_profile_state().clone(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         environments: TurnEnvironmentSelections::new(config.cwd.clone(), Vec::new()),
+        local_environment: None,
         workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
@@ -3406,6 +3414,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
         permission_profile_state: config.permissions.permission_profile_state().clone(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         environments: TurnEnvironmentSelections::new(config.cwd.clone(), Vec::new()),
+        local_environment: None,
         workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
@@ -3903,6 +3912,52 @@ async fn session_settings_legacy_fast_service_tier_update_uses_priority_request_
     );
 }
 
+#[tokio::test]
+async fn session_settings_local_environment_update_validates_selection() {
+    let mut session_configuration = make_session_configuration_for_tests().await;
+    let mut config = (*session_configuration.original_config_do_not_use).clone();
+    config.local_environments = std::collections::BTreeMap::from([(
+        "msvc".to_string(),
+        LocalEnvironmentConfig {
+            description: Some("MSVC toolchain".to_string()),
+            shell_environment_policy: ShellEnvironmentPolicy {
+                inherit: ShellEnvironmentPolicyInherit::None,
+                ignore_default_excludes: true,
+                include_only: Vec::new(),
+                exclude: Vec::new(),
+                r#set: std::collections::HashMap::new(),
+                use_profile: false,
+            },
+        },
+    )]);
+    session_configuration.original_config_do_not_use = Arc::new(config);
+
+    let updated = session_configuration
+        .apply(&SessionSettingsUpdate {
+            local_environment: Some(Some("msvc".to_string())),
+            ..Default::default()
+        })
+        .expect("known local environment should apply");
+    assert_eq!(updated.local_environment.as_deref(), Some("msvc"));
+
+    let err = match session_configuration.apply(&SessionSettingsUpdate {
+        local_environment: Some(Some("missing".to_string())),
+        ..Default::default()
+    }) {
+        Ok(_) => panic!("unknown local environment should fail"),
+        Err(err) => err,
+    };
+    assert_eq!(
+        err,
+        ConstraintError::InvalidValue {
+            field_name: "local_environment",
+            candidate: "missing".to_string(),
+            allowed: "configured local environment name".to_string(),
+            requirement_source: RequirementSource::Unknown,
+        }
+    );
+}
+
 pub(crate) async fn make_session_configuration_for_tests() -> SessionConfiguration {
     let codex_home = tempfile::tempdir().expect("create temp dir");
     let config = build_test_config(codex_home.path()).await;
@@ -3938,6 +3993,7 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
         permission_profile_state: config.permissions.permission_profile_state().clone(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         environments: TurnEnvironmentSelections::new(config.cwd.clone(), Vec::new()),
+        local_environment: None,
         workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
@@ -4790,6 +4846,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_packaged_zsh() {
         permission_profile_state: config.permissions.permission_profile_state().clone(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         environments: TurnEnvironmentSelections::new(config.cwd.clone(), Vec::new()),
+        local_environment: None,
         workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
@@ -4898,6 +4955,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         permission_profile_state: config.permissions.permission_profile_state().clone(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         environments: TurnEnvironmentSelections::new(config.cwd.clone(), default_environments),
+        local_environment: None,
         workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
@@ -5044,6 +5102,10 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         /*network*/ None,
         turn_environments,
         session_configuration.cwd().clone(),
+        TurnLocalEnvironmentState {
+            available: Vec::new(),
+            selected: None,
+        },
         "turn_id".to_string(),
         skills_outcome,
     );
@@ -5130,6 +5192,7 @@ async fn make_session_with_config_and_rx(
         permission_profile_state: config.permissions.permission_profile_state().clone(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         environments: TurnEnvironmentSelections::new(config.cwd.clone(), default_environments),
+        local_environment: None,
         workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
@@ -5232,6 +5295,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         permission_profile_state: config.permissions.permission_profile_state().clone(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         environments: TurnEnvironmentSelections::new(config.cwd.clone(), default_environments),
+        local_environment: None,
         workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
@@ -6976,6 +7040,7 @@ where
         permission_profile_state: config.permissions.permission_profile_state().clone(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         environments: TurnEnvironmentSelections::new(config.cwd.clone(), default_environments),
+        local_environment: None,
         workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
@@ -7122,6 +7187,10 @@ where
         /*network*/ None,
         turn_environments,
         session_configuration.cwd().clone(),
+        TurnLocalEnvironmentState {
+            available: Vec::new(),
+            selected: None,
+        },
         "turn_id".to_string(),
         skills_outcome,
     ));

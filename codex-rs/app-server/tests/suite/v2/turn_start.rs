@@ -2336,6 +2336,7 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
     let first_turn = mcp
         .send_turn_start_request(TurnStartParams {
             environments: None,
+            local_environment: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
@@ -2380,6 +2381,7 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
     let second_turn = mcp
         .send_turn_start_request(TurnStartParams {
             environments: None,
+            local_environment: None,
             thread_id: thread.id.clone(),
             client_user_message_id: None,
             input: vec![V2UserInput::Text {
