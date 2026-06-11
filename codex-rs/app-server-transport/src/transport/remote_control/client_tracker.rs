@@ -50,6 +50,7 @@ pub(crate) struct ClientTracker {
     join_set: JoinSet<(ClientId, StreamId)>,
     server_event_tx: mpsc::Sender<QueuedServerEnvelope>,
     transport_event_tx: mpsc::Sender<TransportEvent>,
+    transport_event_send_timeout: Duration,
     shutdown_token: CancellationToken,
 }
 
@@ -65,7 +66,21 @@ impl ClientTracker {
             join_set: JoinSet::new(),
             server_event_tx,
             transport_event_tx,
+            transport_event_send_timeout: REMOTE_CONTROL_TRANSPORT_EVENT_SEND_TIMEOUT,
             shutdown_token: shutdown_token.child_token(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_transport_event_send_timeout(
+        server_event_tx: mpsc::Sender<QueuedServerEnvelope>,
+        transport_event_tx: mpsc::Sender<TransportEvent>,
+        shutdown_token: &CancellationToken,
+        transport_event_send_timeout: Duration,
+    ) -> Self {
+        Self {
+            transport_event_send_timeout,
+            ..Self::new(server_event_tx, transport_event_tx, shutdown_token)
         }
     }
 
@@ -345,7 +360,7 @@ impl ClientTracker {
 
         let event_name = transport_event_name(&event);
         match timeout(
-            REMOTE_CONTROL_TRANSPORT_EVENT_SEND_TIMEOUT,
+            self.transport_event_send_timeout,
             self.transport_event_tx.send(event),
         )
         .await
@@ -361,7 +376,7 @@ impl ClientTracker {
             Err(_) => {
                 warn!(
                     transport_event = event_name,
-                    timeout = ?REMOTE_CONTROL_TRANSPORT_EVENT_SEND_TIMEOUT,
+                    timeout = ?self.transport_event_send_timeout,
                     "timed out forwarding remote control transport event"
                 );
                 Err(Stopped)

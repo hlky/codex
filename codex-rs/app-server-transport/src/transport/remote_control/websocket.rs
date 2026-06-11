@@ -81,6 +81,7 @@ const REMOTE_CONTROL_CONNECTION_SHUTDOWN_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(5);
 const REMOTE_CONTROL_ACK_LATENCY_WARN_THRESHOLD: std::time::Duration =
     std::time::Duration::from_secs(5);
+const REMOTE_CONTROL_INBOUND_CHANNEL_CAPACITY: usize = 4 * 1024;
 const REMOTE_APP_SERVER_NOT_FOUND_DETAIL: &str = "Remote app server not found";
 
 #[derive(Clone)]
@@ -92,6 +93,11 @@ struct BufferedServerEnvelope {
 struct BoundedOutboundBuffer {
     buffer_by_stream: HashMap<(ClientId, StreamId), VecDeque<BufferedServerEnvelope>>,
     used_tx: watch::Sender<usize>,
+}
+
+struct InboundWebsocketMessage {
+    client_envelope: ClientEnvelope,
+    wire_size_bytes: usize,
 }
 
 impl BoundedOutboundBuffer {
@@ -1035,25 +1041,25 @@ impl RemoteControlWebsocket {
     async fn run_websocket_reader_inner(
         client_tracker: Arc<Mutex<ClientTracker>>,
         state: Arc<Mutex<WebsocketState>>,
-        mut websocket_reader: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+        websocket_reader: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
         pong_timeout: std::time::Duration,
         shutdown_token: CancellationToken,
     ) -> io::Result<()> {
+        let (inbound_message_tx, mut inbound_message_rx) =
+            mpsc::channel(REMOTE_CONTROL_INBOUND_CHANNEL_CAPACITY);
+        let frame_reader_shutdown = shutdown_token.child_token();
+        let mut frame_reader_task = Some(tokio::spawn(Self::run_websocket_frame_reader(
+            inbound_message_tx,
+            websocket_reader,
+            pong_timeout,
+            frame_reader_shutdown.clone(),
+        )));
         let mut client_tracker = client_tracker.lock().await;
         let mut idle_sweep_interval = tokio::time::interval(REMOTE_CONTROL_IDLE_SWEEP_INTERVAL);
         idle_sweep_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        let pong_deadline = tokio::time::sleep(pong_timeout);
-        tokio::pin!(pong_deadline);
-
-        loop {
+        let result = loop {
             let incoming_message = tokio::select! {
-                _ = shutdown_token.cancelled() => return Ok(()),
-                _ = &mut pong_deadline => {
-                    return Err(io::Error::new(
-                        ErrorKind::TimedOut,
-                        "remote control websocket pong timeout",
-                    ));
-                }
+                _ = shutdown_token.cancelled() => break Ok(()),
                 client_key = client_tracker.bookkeep_join_set() => {
                     let Some(client_key) = client_key else {
                         continue;
@@ -1088,48 +1094,31 @@ impl RemoteControlWebsocket {
                     }
                     continue;
                 }
-                incoming_message = websocket_reader.next() => {
+                incoming_message = inbound_message_rx.recv() => {
                     match incoming_message {
                         Some(incoming_message) => incoming_message,
-                        None => return Err(io::Error::new(ErrorKind::UnexpectedEof, "websocket stream ended")),
-                    }
-                }
-            };
-            let (client_envelope, wire_size_bytes) = match incoming_message {
-                Ok(tungstenite::Message::Text(text)) => {
-                    let wire_size_bytes = text.len();
-                    match serde_json::from_str::<ClientEnvelope>(&text) {
-                        Ok(client_envelope) => (client_envelope, wire_size_bytes),
-                        Err(err) => {
-                            warn!("failed to deserialize remote-control client event: {err}");
-                            continue;
+                        None => {
+                            let Some(frame_reader_task) = frame_reader_task.take() else {
+                                break Err(io::Error::other(
+                                    "remote control websocket frame reader task missing",
+                                ));
+                            };
+                            match frame_reader_task.await {
+                                Ok(result) => break result,
+                                Err(err) => {
+                                    break Err(io::Error::other(format!(
+                                        "remote control websocket frame reader join failed: {err}"
+                                    )));
+                                }
+                            }
                         }
                     }
                 }
-                Ok(tungstenite::Message::Pong(_)) => {
-                    pong_deadline
-                        .as_mut()
-                        .reset(tokio::time::Instant::now() + pong_timeout);
-                    continue;
-                }
-                Ok(tungstenite::Message::Ping(_)) | Ok(tungstenite::Message::Frame(_)) => continue,
-                Ok(tungstenite::Message::Binary(_)) => {
-                    warn!("dropping unsupported binary remote-control websocket message");
-                    continue;
-                }
-                Ok(tungstenite::Message::Close(_)) => {
-                    return Err(io::Error::new(
-                        ErrorKind::ConnectionAborted,
-                        "websocket disconnected",
-                    ));
-                }
-                Err(err) => {
-                    return Err(io::Error::new(
-                        ErrorKind::InvalidData,
-                        format!("failed to read from websocket: {err}"),
-                    ));
-                }
             };
+            let InboundWebsocketMessage {
+                client_envelope,
+                wire_size_bytes,
+            } = incoming_message;
 
             let client_message_key = WebsocketState::client_message_key(&client_envelope);
             let observation = {
@@ -1172,6 +1161,86 @@ impl RemoteControlWebsocket {
                         .client_segment_reassembler
                         .invalidate_client(&client_id);
                     websocket_state.invalidate_client_message_client(&client_id);
+                }
+            }
+        };
+        frame_reader_shutdown.cancel();
+        if let Some(frame_reader_task) = frame_reader_task
+            && !frame_reader_task.is_finished()
+        {
+            let _ = frame_reader_task.await;
+        }
+        result
+    }
+
+    async fn run_websocket_frame_reader(
+        inbound_message_tx: mpsc::Sender<InboundWebsocketMessage>,
+        mut websocket_reader: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+        pong_timeout: std::time::Duration,
+        shutdown_token: CancellationToken,
+    ) -> io::Result<()> {
+        let pong_deadline = tokio::time::sleep(pong_timeout);
+        tokio::pin!(pong_deadline);
+
+        loop {
+            let incoming_message = tokio::select! {
+                _ = shutdown_token.cancelled() => return Ok(()),
+                _ = &mut pong_deadline => {
+                    return Err(io::Error::new(
+                        ErrorKind::TimedOut,
+                        "remote control websocket pong timeout",
+                    ));
+                }
+                incoming_message = websocket_reader.next() => {
+                    match incoming_message {
+                        Some(incoming_message) => incoming_message,
+                        None => return Err(io::Error::new(ErrorKind::UnexpectedEof, "websocket stream ended")),
+                    }
+                }
+            };
+            match incoming_message {
+                Ok(tungstenite::Message::Text(text)) => {
+                    let wire_size_bytes = text.len();
+                    let client_envelope = match serde_json::from_str::<ClientEnvelope>(&text) {
+                        Ok(client_envelope) => client_envelope,
+                        Err(err) => {
+                            warn!("failed to deserialize remote-control client event: {err}");
+                            continue;
+                        }
+                    };
+                    let inbound_message = InboundWebsocketMessage {
+                        client_envelope,
+                        wire_size_bytes,
+                    };
+                    tokio::select! {
+                        _ = shutdown_token.cancelled() => return Ok(()),
+                        send_result = inbound_message_tx.send(inbound_message) => {
+                            if send_result.is_err() {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+                Ok(tungstenite::Message::Pong(_)) => {
+                    pong_deadline
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + pong_timeout);
+                }
+                Ok(tungstenite::Message::Ping(_)) | Ok(tungstenite::Message::Frame(_)) => {}
+                Ok(tungstenite::Message::Binary(_)) => {
+                    warn!("dropping unsupported binary remote-control websocket message");
+                }
+                Ok(tungstenite::Message::Close(_)) => {
+                    return Err(io::Error::new(
+                        ErrorKind::ConnectionAborted,
+                        "websocket disconnected",
+                    ));
+                }
+                Err(err) => {
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidData,
+                        format!("failed to read from websocket: {err}"),
+                    ));
                 }
             }
         }
@@ -1693,6 +1762,8 @@ mod tests {
     use codex_app_server_protocol::ConfigWarningNotification;
     use codex_app_server_protocol::JSONRPCMessage;
     use codex_app_server_protocol::JSONRPCNotification;
+    use codex_app_server_protocol::JSONRPCRequest;
+    use codex_app_server_protocol::RequestId;
     use codex_app_server_protocol::ServerNotification;
     use codex_config::types::AuthCredentialsStoreMode;
     use codex_core::test_support::auth_manager_from_auth;
@@ -2637,6 +2708,88 @@ mod tests {
 
         assert_eq!(err.kind(), ErrorKind::TimedOut);
         assert_eq!(err.to_string(), "remote control websocket pong timeout");
+    }
+
+    #[tokio::test]
+    async fn run_websocket_reader_inner_reads_pongs_while_transport_forwarding_is_blocked() {
+        let (client_stream, server_stream) = connected_websocket_pair().await;
+        let (_client_writer, websocket_reader) = client_stream.split();
+        let (mut server_writer, _server_reader) = server_stream.split();
+        let (outbound_buffer, _used_rx) = BoundedOutboundBuffer::new();
+        let state = Arc::new(Mutex::new(WebsocketState {
+            outbound_buffer,
+            subscribe_cursor: None,
+            next_seq_id_by_stream: HashMap::new(),
+            last_completed_client_chunk_seq_id_by_stream: HashMap::new(),
+            client_segment_reassembler: ClientSegmentReassembler::default(),
+        }));
+        let (server_event_tx, _server_event_rx) = mpsc::channel(super::super::CHANNEL_CAPACITY);
+        let (transport_event_tx, _transport_event_rx) = mpsc::channel(1);
+        let shutdown_token = CancellationToken::new();
+        let client_tracker = Arc::new(Mutex::new(
+            ClientTracker::with_transport_event_send_timeout(
+                server_event_tx,
+                transport_event_tx.clone(),
+                &shutdown_token,
+                Duration::from_millis(200),
+            ),
+        ));
+        transport_event_tx
+            .send(TransportEvent::ConnectionClosed {
+                connection_id: crate::outgoing_message::ConnectionId(999),
+            })
+            .await
+            .expect("transport event queue should accept prefill");
+
+        let mut reader_task = tokio::spawn(RemoteControlWebsocket::run_websocket_reader_inner(
+            client_tracker,
+            state,
+            websocket_reader,
+            Duration::from_millis(100),
+            shutdown_token.clone(),
+        ));
+        let initialize = ClientEnvelope {
+            event: ClientEvent::ClientMessage {
+                message: JSONRPCMessage::Request(JSONRPCRequest {
+                    id: RequestId::Integer(1),
+                    method: "initialize".to_string(),
+                    params: None,
+                    trace: None,
+                }),
+            },
+            client_id: ClientId("client-1".to_string()),
+            stream_id: Some(StreamId("stream-1".to_string())),
+            seq_id: Some(1),
+            cursor: None,
+        };
+        server_writer
+            .send(tungstenite::Message::Text(
+                serde_json::to_string(&initialize)
+                    .expect("initialize should serialize")
+                    .into(),
+            ))
+            .await
+            .expect("initialize should send");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        server_writer
+            .send(tungstenite::Message::Pong(Vec::new().into()))
+            .await
+            .expect("pong should send");
+
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(
+            timeout(Duration::from_millis(20), &mut reader_task)
+                .await
+                .is_err(),
+            "reader should remain alive past the original pong deadline"
+        );
+
+        shutdown_token.cancel();
+        timeout(Duration::from_secs(1), &mut reader_task)
+            .await
+            .expect("reader task should stop after shutdown")
+            .expect("reader task should join")
+            .expect("reader should stop cleanly");
     }
 
     #[test]
