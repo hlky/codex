@@ -1,0 +1,42 @@
+diff --git a/extensions/llvm_source.bzl b/extensions/llvm_source.bzl
+index 5f438eff23..7eb6e4d248 100644
+--- a/extensions/llvm_source.bzl
++++ b/extensions/llvm_source.bzl
+@@ -203,9 +203,36 @@ def _create_support_archives():
+ def _llvm_subproject_repository_impl(rctx):
+     llvm_root = rctx.path(Label("@llvm-raw//:WORKSPACE")).dirname
+     src_dir = llvm_root.get_child(rctx.attr.dir)
++    is_windows = "windows" in rctx.os.name.lower()
+ 
++    if is_windows:
++        materialize_script = rctx.path("materialize_subproject_entry.ps1")
++        rctx.file(
++            "materialize_subproject_entry.ps1",
++            """param([string]$source, [string]$destination)
++Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
++""",
++        )
++
+     for entry in src_dir.readdir():
+-        rctx.symlink(entry, entry.basename)
++        if is_windows:
++            destination = rctx.path(entry.basename)
++            result = rctx.execute([
++                "powershell.exe",
++                "-NoProfile",
++                "-File",
++                str(materialize_script),
++                str(entry),
++                str(destination),
++            ])
++            if result.return_code != 0:
++                fail("Failed to materialize LLVM subproject entry '{}':\\nstdout:\\n{}\\nstderr:\\n{}".format(
++                    entry,
++                    result.stdout,
++                    result.stderr,
++                ))
++        else:
++            rctx.symlink(entry, entry.basename)
+ 
+     rctx.file("BUILD.bazel", rctx.read(rctx.attr.build_file))
+     return rctx.repo_metadata(reproducible = True)

@@ -133,8 +133,16 @@ bazel-clippy:
 bazel-argument-comment-lint:
     bazel build --config=argument-comment-lint -- $({{ justfile_directory() }}/tools/argument-comment-lint/list-bazel-targets.sh)
 
+[unix]
 build-for-release:
     bazel build //codex-rs/cli:release_binaries
+
+[windows]
+build-for-release:
+    # Local Windows workstations do not have the full cross-target Rust toolchain
+    # matrix that CI uses for multi-platform release packaging. Build the native
+    # optimized CLI binary instead.
+    bazel build -c opt --host_platform=//:local_windows_msvc --platforms=//:windows_x86_64_msvc //codex-rs/cli:codex
 
 # Run the MCP server
 mcp-server-run *args:

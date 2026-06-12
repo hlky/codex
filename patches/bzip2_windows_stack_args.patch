@@ -13,6 +13,21 @@ diff --git a/BUILD.bazel b/BUILD.bazel
 +        "//conditions:default": [],
 +    }),
      includes = ["."],
+diff --git a/bzlib.c b/bzlib.c
+--- a/bzlib.c
++++ b/bzlib.c
+@@ -1414,8 +1414,9 @@
+       }
+       mode++;
+    }
+-   strcat(mode2, writing ? "w" : "r" );
+-   strcat(mode2,"b");   /* binary mode */
++   mode2[0] = writing ? 'w' : 'r';
++   mode2[1] = 'b';   /* binary mode */
++   mode2[2] = '\0';
+ 
+    if (open_mode==0) {
+       if (path==NULL || strcmp(path,"")==0) {
 diff --git a/MODULE.bazel b/MODULE.bazel
 --- a/MODULE.bazel
 +++ b/MODULE.bazel

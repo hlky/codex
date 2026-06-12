@@ -3,6 +3,11 @@ load("@crates//:defs.bzl", "all_crate_deps")
 load("@rules_rust//cargo/private:cargo_build_script_wrapper.bzl", "cargo_build_script")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro", "rust_test")
 
+# Keep this in sync with `codex-rs/Cargo.toml`'s `[workspace.package].version`.
+# Bazel `rules_rust` defaults crate version env vars such as `CARGO_PKG_VERSION`
+# to `0.0.0` unless callers set the rule `version` attr explicitly.
+CODEX_RS_WORKSPACE_VERSION = "0.138.0-alpha.7"
+
 # Match Cargo's Windows linker behavior so Bazel-built binaries and tests use
 # the same stack reserve on both Windows ABIs and resolve UCRT imports on MSVC.
 WINDOWS_RUSTC_LINK_FLAGS = select({
@@ -275,7 +280,7 @@ def codex_rust_crate(
             deps = all_crate_deps(build = True),
             data = build_script_data,
             # Some build script deps sniff version-related env vars...
-            version = "0.0.0",
+            version = CODEX_RS_WORKSPACE_VERSION,
         )
 
         maybe_deps += [name + "-build-script"]
@@ -293,6 +298,7 @@ def codex_rust_crate(
             edition = crate_edition,
             rustc_flags = rustc_flags_extra,
             rustc_env = rustc_env,
+            version = CODEX_RS_WORKSPACE_VERSION,
             visibility = ["//visibility:public"],
         )
 
@@ -322,6 +328,7 @@ def codex_rust_crate(
             rustc_env = rustc_env,
             data = test_data_extra,
             tags = test_tags + ["manual"],
+            version = CODEX_RS_WORKSPACE_VERSION,
         )
 
         unit_test_kwargs = {}
@@ -359,6 +366,7 @@ def codex_rust_crate(
             edition = crate_edition,
             rustc_flags = rustc_flags_extra + WINDOWS_RUSTC_LINK_FLAGS,
             srcs = native.glob(["src/**/*.rs"]),
+            version = CODEX_RS_WORKSPACE_VERSION,
             visibility = ["//visibility:public"],
         )
 
@@ -429,6 +437,7 @@ def codex_rust_crate(
                 rustc_env = rustc_env,
                 target_compatible_with = WINDOWS_GNULLVM_INCOMPATIBLE,
                 tags = test_tags + ["manual"],
+                version = CODEX_RS_WORKSPACE_VERSION,
             )
 
             workspace_root_test(
@@ -469,6 +478,7 @@ def codex_rust_crate(
                 env = cargo_env,
                 target_compatible_with = WINDOWS_GNULLVM_INCOMPATIBLE,
                 tags = test_tags,
+                version = CODEX_RS_WORKSPACE_VERSION,
                 **test_kwargs
             )
 
@@ -494,6 +504,7 @@ def codex_rust_crate(
             env = cargo_env,
             target_compatible_with = WINDOWS_GNULLVM_ONLY,
             tags = test_tags + ["manual"],
+            version = CODEX_RS_WORKSPACE_VERSION,
         )
 
         workspace_root_test(

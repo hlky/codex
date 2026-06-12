@@ -12,6 +12,7 @@ single_version_override(
     patches = [
         "//patches:llvm_rusty_v8_custom_libcxx.patch",
         "//patches:llvm_windows_symlink_extract.patch",
+        "//patches:llvm_windows_subproject_materialization.patch",
     ],
 )
 # Abseil picks a MinGW pthread TLS path that does not match our hermetic
