@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use futures::future::BoxFuture;
 use tokio_util::sync::CancellationToken;
 
 use crate::session::TurnInput;
@@ -24,22 +25,13 @@ impl RegularTask {
     }
 }
 
-impl SessionTask for RegularTask {
-    fn kind(&self) -> TaskKind {
-        TaskKind::Regular
-    }
-
-    fn span_name(&self) -> &'static str {
-        "session_task.turn"
-    }
-
-    async fn run(
-        self: Arc<Self>,
-        session: Arc<SessionTaskContext>,
-        ctx: Arc<TurnContext>,
-        input: Vec<TurnInput>,
-        cancellation_token: CancellationToken,
-    ) -> Option<String> {
+fn run_regular_task(
+    session: Arc<SessionTaskContext>,
+    ctx: Arc<TurnContext>,
+    input: Vec<TurnInput>,
+    cancellation_token: CancellationToken,
+) -> BoxFuture<'static, Option<String>> {
+    Box::pin(async move {
         let sess = session.clone_session();
         let turn_extension_data = session.turn_extension_data();
         let run_turn_span = trace_span!("run_turn");
@@ -82,5 +74,26 @@ impl SessionTask for RegularTask {
             }
             next_input = Vec::new();
         }
+    })
+}
+
+impl SessionTask for RegularTask {
+    fn kind(&self) -> TaskKind {
+        TaskKind::Regular
+    }
+
+    fn span_name(&self) -> &'static str {
+        "session_task.turn"
+    }
+
+    fn run(
+        self: Arc<Self>,
+        session: Arc<SessionTaskContext>,
+        ctx: Arc<TurnContext>,
+        input: Vec<TurnInput>,
+        cancellation_token: CancellationToken,
+    ) -> impl std::future::Future<Output = Option<String>> + Send {
+        let _ = self;
+        run_regular_task(session, ctx, input, cancellation_token)
     }
 }
