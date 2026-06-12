@@ -469,9 +469,15 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::protocol::CollabResumeBeginEvent;
     use codex_protocol::protocol::CollabResumeEndEvent;
+    use codex_protocol::protocol::ExecCommandBeginEvent;
+    use codex_protocol::protocol::ExecCommandEndEvent;
     use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
+    use codex_protocol::protocol::ExecCommandSource;
+    use codex_protocol::protocol::ExecCommandStatus;
     use codex_protocol::protocol::ExecOutputStream;
+    use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
 
     fn assert_item_started_server_notification(
         notification: ServerNotification,
@@ -605,6 +611,103 @@ mod tests {
                 turn_id: "turn-1".to_string(),
                 item_id: "call-1".to_string(),
                 delta: "hello".to_string(),
+            },
+        );
+    }
+
+    #[test]
+    fn exec_command_begin_unwraps_shell_wrapper_for_display() {
+        let cwd = AbsolutePathBuf::try_from(std::env::temp_dir()).expect("absolute temp dir");
+        let notification = item_event_to_server_notification(
+            EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+                call_id: "call-2".to_string(),
+                process_id: Some("pid-1".to_string()),
+                turn_id: "turn-1".to_string(),
+                started_at_ms: 123,
+                command: vec![
+                    r#"C:\Program Files\PowerShell\7\pwsh.exe"#.to_string(),
+                    "-Command".to_string(),
+                    "docker tag hlky:dinoml-ubuntu-nodeps hlky/dinoml:ubuntu-nodeps && docker push hlky/dinoml:ubuntu-nodeps".to_string(),
+                ],
+                cwd: cwd.clone(),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::UserShell,
+                interaction_input: None,
+            }),
+            "thread-1",
+            "turn-1",
+        );
+
+        assert_item_started_server_notification(
+            notification,
+            ItemStartedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                started_at_ms: 123,
+                item: ThreadItem::CommandExecution {
+                    id: "call-2".to_string(),
+                    command: "docker tag hlky:dinoml-ubuntu-nodeps hlky/dinoml:ubuntu-nodeps && docker push hlky/dinoml:ubuntu-nodeps".to_string(),
+                    cwd,
+                    process_id: Some("pid-1".to_string()),
+                    source: crate::protocol::v2::CommandExecutionSource::UserShell,
+                    status: crate::protocol::v2::CommandExecutionStatus::InProgress,
+                    command_actions: Vec::new(),
+                    aggregated_output: None,
+                    exit_code: None,
+                    duration_ms: None,
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn exec_command_end_unwraps_shell_wrapper_for_display() {
+        let cwd = AbsolutePathBuf::try_from(std::env::temp_dir()).expect("absolute temp dir");
+        let notification = item_event_to_server_notification(
+            EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                call_id: "call-3".to_string(),
+                process_id: Some("pid-2".to_string()),
+                turn_id: "turn-1".to_string(),
+                completed_at_ms: 456,
+                command: vec![
+                    r#"C:\Program Files\PowerShell\7\pwsh.exe"#.to_string(),
+                    "-Command".to_string(),
+                    "docker push hlky/dinoml:ubuntu-nodeps".to_string(),
+                ],
+                cwd: cwd.clone(),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::UserShell,
+                interaction_input: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                aggregated_output: String::new(),
+                exit_code: 0,
+                duration: Duration::from_millis(12),
+                formatted_output: String::new(),
+                status: ExecCommandStatus::Completed,
+            }),
+            "thread-1",
+            "turn-1",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                completed_at_ms: 456,
+                item: ThreadItem::CommandExecution {
+                    id: "call-3".to_string(),
+                    command: "docker push hlky/dinoml:ubuntu-nodeps".to_string(),
+                    cwd,
+                    process_id: Some("pid-2".to_string()),
+                    source: crate::protocol::v2::CommandExecutionSource::UserShell,
+                    status: crate::protocol::v2::CommandExecutionStatus::Completed,
+                    command_actions: Vec::new(),
+                    aggregated_output: None,
+                    exit_code: Some(0),
+                    duration_ms: Some(12),
+                },
             },
         );
     }

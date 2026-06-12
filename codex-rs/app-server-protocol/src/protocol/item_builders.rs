@@ -32,10 +32,19 @@ use codex_protocol::protocol::GuardianAssessmentAction;
 use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::PatchApplyBeginEvent;
 use codex_protocol::protocol::PatchApplyEndEvent;
+use codex_shell_command::parse_command::extract_shell_command;
 use codex_shell_command::parse_command::parse_command;
 use codex_shell_command::parse_command::shlex_join;
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+fn command_display(command: &[String]) -> String {
+    if let Some((_, script)) = extract_shell_command(command) {
+        return script.to_string();
+    }
+
+    shlex_join(command)
+}
 
 pub fn build_file_change_approval_request_item(
     payload: &ApplyPatchApprovalRequestEvent,
@@ -68,7 +77,7 @@ pub fn build_command_execution_approval_request_item(
 ) -> ThreadItem {
     ThreadItem::CommandExecution {
         id: payload.call_id.clone(),
-        command: shlex_join(&payload.command),
+        command: command_display(&payload.command),
         cwd: payload.cwd.clone(),
         process_id: None,
         source: CommandExecutionSource::Agent,
@@ -88,7 +97,7 @@ pub fn build_command_execution_approval_request_item(
 pub fn build_command_execution_begin_item(payload: &ExecCommandBeginEvent) -> ThreadItem {
     ThreadItem::CommandExecution {
         id: payload.call_id.clone(),
-        command: shlex_join(&payload.command),
+        command: command_display(&payload.command),
         cwd: payload.cwd.clone(),
         process_id: payload.process_id.clone(),
         source: payload.source.into(),
@@ -115,7 +124,7 @@ pub fn build_command_execution_end_item(payload: &ExecCommandEndEvent) -> Thread
 
     ThreadItem::CommandExecution {
         id: payload.call_id.clone(),
-        command: shlex_join(&payload.command),
+        command: command_display(&payload.command),
         cwd: payload.cwd.clone(),
         process_id: payload.process_id.clone(),
         source: payload.source.into(),

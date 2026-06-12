@@ -3,7 +3,6 @@ use app_test_support::TestAppServer;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence;
 use app_test_support::create_shell_command_sse_response;
-use app_test_support::format_with_current_shell_display;
 use app_test_support::to_response;
 use codex_app_server_protocol::CommandExecutionApprovalDecision;
 use codex_app_server_protocol::CommandExecutionOutputDeltaNotification;
@@ -293,10 +292,7 @@ async fn thread_shell_command_uses_existing_active_turn() -> Result<()> {
         unreachable!("helper returns command execution item");
     };
     assert_eq!(source, &CommandExecutionSource::Agent);
-    assert_eq!(
-        command,
-        &format_with_current_shell_display("python3 -c 'print(42)'")
-    );
+    assert_eq!(command, "python3 -c 'print(42)'");
 
     let server_req = timeout(
         DEFAULT_READ_TIMEOUT,
