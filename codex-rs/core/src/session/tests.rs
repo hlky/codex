@@ -24,6 +24,7 @@ use codex_config::RequirementSource;
 use codex_config::Sourced;
 use codex_config::loader::project_trust_key;
 use codex_config::types::LocalEnvironmentConfig;
+use codex_config::types::LocalEnvironmentSourceConfig;
 use codex_config::types::ToolSuggestDisabledTool;
 use core_test_support::test_codex::local_selections;
 
@@ -3920,14 +3921,16 @@ async fn session_settings_local_environment_update_validates_selection() {
         "msvc".to_string(),
         LocalEnvironmentConfig {
             description: Some("MSVC toolchain".to_string()),
-            shell_environment_policy: ShellEnvironmentPolicy {
+            source: LocalEnvironmentSourceConfig::Static(ShellEnvironmentPolicy {
                 inherit: ShellEnvironmentPolicyInherit::None,
                 ignore_default_excludes: true,
                 include_only: Vec::new(),
                 exclude: Vec::new(),
                 r#set: std::collections::HashMap::new(),
+                path_prepend: Vec::new(),
+                path_append: Vec::new(),
                 use_profile: false,
-            },
+            }),
         },
     )]);
     session_configuration.original_config_do_not_use = Arc::new(config);
@@ -5120,6 +5123,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         managed_network_proxy_refresh_lock: Semaphore::new(/*permits*/ 1),
         features: config.features.clone(),
         multi_agent_version: OnceLock::from(config.multi_agent_version_from_features()),
+        local_environment_cache: Mutex::new(HashMap::new()),
         pending_mcp_server_refresh_config: Mutex::new(None),
         conversation: Arc::new(RealtimeConversationManager::new()),
         active_turn: Mutex::new(None),
@@ -7205,6 +7209,7 @@ where
         managed_network_proxy_refresh_lock: Semaphore::new(/*permits*/ 1),
         features: config.features.clone(),
         multi_agent_version: OnceLock::from(config.multi_agent_version_from_features()),
+        local_environment_cache: Mutex::new(HashMap::new()),
         pending_mcp_server_refresh_config: Mutex::new(None),
         conversation: Arc::new(RealtimeConversationManager::new()),
         active_turn: Mutex::new(None),

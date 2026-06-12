@@ -451,6 +451,8 @@ fn shell_environment_policy(env_policy: &ExecEnvPolicy) -> ShellEnvironmentPolic
             .map(|pattern| EnvironmentVariablePattern::new_case_insensitive(pattern))
             .collect(),
         r#set: env_policy.r#set.clone(),
+        path_prepend: Vec::new(),
+        path_append: Vec::new(),
         include_only: env_policy
             .include_only
             .iter()

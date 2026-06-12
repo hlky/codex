@@ -908,23 +908,50 @@ impl From<SandboxWorkspaceWrite> for codex_app_server_protocol::SandboxSettings 
 #[schemars(deny_unknown_fields)]
 pub struct LocalEnvironmentToml {
     pub description: Option<String>,
-    pub shell_environment_policy: ShellEnvironmentPolicyToml,
+    pub shell_environment_policy: Option<ShellEnvironmentPolicyToml>,
+    pub script: Option<LocalEnvironmentScriptToml>,
 }
 
 /// Effective runtime configuration for a named local command environment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalEnvironmentConfig {
     pub description: Option<String>,
-    pub shell_environment_policy: ShellEnvironmentPolicy,
+    pub source: LocalEnvironmentSourceConfig,
 }
 
-impl From<LocalEnvironmentToml> for LocalEnvironmentConfig {
-    fn from(toml: LocalEnvironmentToml) -> Self {
-        Self {
-            description: toml.description,
-            shell_environment_policy: toml.shell_environment_policy.into(),
-        }
-    }
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalEnvironmentScriptShell {
+    Sh,
+    Bash,
+    Zsh,
+    Cmd,
+    #[serde(rename = "powershell")]
+    PowerShell,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct LocalEnvironmentScriptToml {
+    pub script: AbsolutePathBuf,
+    pub shell: Option<LocalEnvironmentScriptShell>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub cwd: Option<AbsolutePathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalEnvironmentScriptConfig {
+    pub script: AbsolutePathBuf,
+    pub shell: LocalEnvironmentScriptShell,
+    pub args: Vec<String>,
+    pub cwd: Option<AbsolutePathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LocalEnvironmentSourceConfig {
+    Static(ShellEnvironmentPolicy),
+    Script(LocalEnvironmentScriptConfig),
 }
 
 /// Policy for building the `env` when spawning a process via shell-like tools.
@@ -939,6 +966,10 @@ pub struct ShellEnvironmentPolicyToml {
     pub exclude: Option<Vec<String>>,
 
     pub r#set: Option<HashMap<String, String>>,
+
+    pub path_prepend: Option<Vec<String>>,
+
+    pub path_append: Option<Vec<String>>,
 
     /// List of regular expressions.
     pub include_only: Option<Vec<String>>,
@@ -958,6 +989,8 @@ impl From<ShellEnvironmentPolicyToml> for ShellEnvironmentPolicy {
             .map(|s| EnvironmentVariablePattern::new_case_insensitive(&s))
             .collect();
         let r#set = toml.r#set.unwrap_or_default();
+        let path_prepend = toml.path_prepend.unwrap_or_default();
+        let path_append = toml.path_append.unwrap_or_default();
         let include_only = toml
             .include_only
             .unwrap_or_default()
@@ -971,6 +1004,8 @@ impl From<ShellEnvironmentPolicyToml> for ShellEnvironmentPolicy {
             ignore_default_excludes,
             exclude,
             r#set,
+            path_prepend,
+            path_append,
             include_only,
             use_profile,
         }

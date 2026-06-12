@@ -2,6 +2,8 @@ use crate::config_types::EnvironmentVariablePattern;
 use crate::config_types::ShellEnvironmentPolicy;
 use crate::config_types::ShellEnvironmentPolicyInherit;
 use std::collections::HashMap;
+#[cfg(target_os = "windows")]
+use std::collections::hash_map::Entry;
 
 pub const CODEX_THREAD_ID_ENV_VAR: &str = "CODEX_THREAD_ID";
 
@@ -93,20 +95,76 @@ where
 
     // Step 4 - Apply user-provided overrides.
     for (key, val) in &policy.r#set {
-        env_map.insert(key.clone(), val.clone());
+        insert_env_value(&mut env_map, key, val.clone());
     }
 
-    // Step 5 - If include_only is non-empty, keep only the matching vars.
+    // Step 5 - Merge PATH prepend/append entries.
+    if !policy.path_prepend.is_empty() || !policy.path_append.is_empty() {
+        merge_path_entries(&mut env_map, &policy.path_prepend, &policy.path_append);
+    }
+
+    // Step 6 - If include_only is non-empty, keep only the matching vars.
     if !policy.include_only.is_empty() {
         env_map.retain(|k, _| matches_any(k, &policy.include_only));
     }
 
-    // Step 6 - Populate the thread ID environment variable when provided.
+    // Step 7 - Populate the thread ID environment variable when provided.
     if let Some(thread_id) = thread_id {
-        env_map.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.to_string());
+        insert_env_value(&mut env_map, CODEX_THREAD_ID_ENV_VAR, thread_id.to_string());
     }
 
     env_map
+}
+
+fn insert_env_value(env_map: &mut HashMap<String, String>, key: &str, value: String) {
+    #[cfg(target_os = "windows")]
+    if let Some(existing_key) = env_map
+        .keys()
+        .find(|existing| existing.eq_ignore_ascii_case(key))
+    {
+        let existing_key = existing_key.clone();
+        if let Entry::Occupied(mut entry) = env_map.entry(existing_key) {
+            entry.insert(value);
+            return;
+        }
+    }
+
+    env_map.insert(key.to_string(), value);
+}
+
+fn merge_path_entries(
+    env_map: &mut HashMap<String, String>,
+    path_prepend: &[String],
+    path_append: &[String],
+) {
+    let separator = if cfg!(target_os = "windows") {
+        ";"
+    } else {
+        ":"
+    };
+    let existing_key = env_map
+        .keys()
+        .find(|key| key.eq_ignore_ascii_case("PATH"))
+        .cloned()
+        .unwrap_or_else(|| "PATH".to_string());
+    let existing = env_map.remove(&existing_key).unwrap_or_default();
+    let mut segments = Vec::new();
+    segments.extend(
+        path_prepend
+            .iter()
+            .filter(|&segment| !segment.is_empty())
+            .cloned(),
+    );
+    if !existing.is_empty() {
+        segments.push(existing);
+    }
+    segments.extend(
+        path_append
+            .iter()
+            .filter(|&segment| !segment.is_empty())
+            .cloned(),
+    );
+    insert_env_value(env_map, &existing_key, segments.join(separator));
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -209,6 +267,43 @@ mod windows_tests {
 
         assert_eq!(result, expected);
     }
+
+    #[test]
+    fn set_replaces_path_case_insensitively_on_windows() {
+        let vars = make_vars(&[("Path", "C:\\Windows\\System32")]);
+        let mut policy = ShellEnvironmentPolicy {
+            inherit: ShellEnvironmentPolicyInherit::All,
+            ignore_default_excludes: true,
+            ..Default::default()
+        };
+        policy
+            .r#set
+            .insert("PATH".to_string(), "C:\\ROCm\\bin".to_string());
+
+        let result = populate_env(vars, &policy, /*thread_id*/ None);
+        let expected = HashMap::from([("Path".to_string(), "C:\\ROCm\\bin".to_string())]);
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn path_prepend_merges_existing_path_case_insensitively_on_windows() {
+        let vars = make_vars(&[("Path", "C:\\Windows\\System32")]);
+        let policy = ShellEnvironmentPolicy {
+            inherit: ShellEnvironmentPolicyInherit::All,
+            ignore_default_excludes: true,
+            path_prepend: vec!["H:\\dinoml_v2\\.venv\\rocm\\Scripts".to_string()],
+            ..Default::default()
+        };
+
+        let result = populate_env(vars, &policy, /*thread_id*/ None);
+        let expected = HashMap::from([(
+            "Path".to_string(),
+            "H:\\dinoml_v2\\.venv\\rocm\\Scripts;C:\\Windows\\System32".to_string(),
+        )]);
+
+        assert_eq!(result, expected);
+    }
 }
 
 #[cfg(all(test, not(target_os = "windows")))]
@@ -244,6 +339,26 @@ mod non_windows_tests {
             ("home".to_string(), "/home/codex".to_string()),
             ("TmpDir".to_string(), "/tmp/custom".to_string()),
         ]);
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn path_prepend_and_append_merge_existing_path_on_non_windows() {
+        let vars = make_vars(&[("PATH", "/usr/bin")]);
+        let policy = ShellEnvironmentPolicy {
+            inherit: ShellEnvironmentPolicyInherit::All,
+            ignore_default_excludes: true,
+            path_prepend: vec!["/opt/rocm/bin".to_string()],
+            path_append: vec!["/custom/bin".to_string()],
+            ..Default::default()
+        };
+
+        let result = populate_env(vars, &policy, /*thread_id*/ None);
+        let expected = HashMap::from([(
+            "PATH".to_string(),
+            "/opt/rocm/bin:/usr/bin:/custom/bin".to_string(),
+        )]);
 
         assert_eq!(result, expected);
     }

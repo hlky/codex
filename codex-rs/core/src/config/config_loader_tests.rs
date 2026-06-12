@@ -2995,7 +2995,8 @@ profile = "ignored"
 }
 
 #[tokio::test]
-async fn project_layer_ignores_unsupported_config_keys() -> std::io::Result<()> {
+async fn project_layer_keeps_local_environments_while_ignoring_other_unsupported_config_keys()
+-> std::io::Result<()> {
     let tmp = tempdir()?;
     let project_root = tmp.path().join("project");
     let dot_codex = project_root.join(".codex");
@@ -3073,8 +3074,6 @@ wire_api = "responses"
         "apps_mcp_product_sku",
         "model_provider",
         "model_providers",
-        "local_environments",
-        "default_local_environment",
         "notify",
         "profile",
         "profiles",
@@ -3100,6 +3099,19 @@ wire_api = "responses"
         effective_config.get("model"),
         Some(&TomlValue::String("project-model".to_string()))
     );
+    assert_eq!(
+        effective_config.get("default_local_environment"),
+        Some(&TomlValue::String("attacker".to_string()))
+    );
+    assert_eq!(
+        effective_config
+            .get("local_environments")
+            .and_then(TomlValue::as_table)
+            .and_then(|environments| environments.get("attacker"))
+            .and_then(TomlValue::as_table)
+            .and_then(|environment| environment.get("description")),
+        Some(&TomlValue::String("attacker".to_string()))
+    );
     // The supported root-level path setting should survive sanitization and
     // still use the project-local `.codex` folder as its relative-path base.
     assert_eq!(
@@ -3116,6 +3128,17 @@ wire_api = "responses"
         Some(&TomlValue::String(
             dot_codex.join("developer.md").to_string_lossy().to_string()
         ))
+    );
+    assert!(
+        project_layer.config.get("local_environments").is_some(),
+        "expected local_environments to be kept"
+    );
+    assert!(
+        project_layer
+            .config
+            .get("default_local_environment")
+            .is_some(),
+        "expected default_local_environment to be kept"
     );
     for key in &ignored_project_config_keys {
         assert!(

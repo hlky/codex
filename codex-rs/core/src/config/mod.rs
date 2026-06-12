@@ -120,6 +120,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::config::local_environments::resolve_local_environment_configs;
 use crate::config::permissions::BUILT_IN_READ_ONLY_PROFILE;
 use crate::config::permissions::BUILT_IN_WORKSPACE_PROFILE;
 use crate::config::permissions::apply_network_proxy_feature_config;
@@ -139,6 +140,7 @@ use toml_edit::DocumentMut;
 
 pub(crate) mod agent_roles;
 pub mod edit;
+mod local_environments;
 mod managed_features;
 mod network_proxy_spec;
 mod otel;
@@ -3084,11 +3086,7 @@ impl Config {
             .clone();
 
         let shell_environment_policy = cfg.shell_environment_policy.into();
-        let local_environments = cfg
-            .local_environments
-            .into_iter()
-            .map(|(name, environment)| (name, environment.into()))
-            .collect::<BTreeMap<_, _>>();
+        let local_environments = resolve_local_environment_configs(cfg.local_environments)?;
         let default_local_environment = local_environment.unwrap_or(cfg.default_local_environment);
         if let Some(name) = default_local_environment.as_ref()
             && !local_environments.contains_key(name)

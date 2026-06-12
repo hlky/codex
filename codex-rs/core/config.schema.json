@@ -1225,6 +1225,41 @@
       ],
       "description": "One action binding value in config.\n\nThis accepts either:\n\n1. A single key spec string (`\"ctrl-a\"`). 2. A list of key spec strings (`[\"ctrl-a\", \"alt-a\"]`).\n\nAn empty list explicitly unbinds the action in that scope. Because an explicit empty list is still a configured value, runtime resolution must not fall through to global or built-in defaults for that action."
     },
+    "LocalEnvironmentScriptShell": {
+      "enum": [
+        "sh",
+        "bash",
+        "zsh",
+        "cmd",
+        "powershell"
+      ],
+      "type": "string"
+    },
+    "LocalEnvironmentScriptToml": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cwd": {
+          "$ref": "#/definitions/AbsolutePathBuf"
+        },
+        "script": {
+          "$ref": "#/definitions/AbsolutePathBuf"
+        },
+        "shell": {
+          "$ref": "#/definitions/LocalEnvironmentScriptShell"
+        }
+      },
+      "required": [
+        "script"
+      ],
+      "type": "object"
+    },
     "LocalEnvironmentToml": {
       "additionalProperties": false,
       "description": "Static config for a named local command environment overlay.",
@@ -1232,13 +1267,13 @@
         "description": {
           "type": "string"
         },
+        "script": {
+          "$ref": "#/definitions/LocalEnvironmentScriptToml"
+        },
         "shell_environment_policy": {
           "$ref": "#/definitions/ShellEnvironmentPolicyToml"
         }
       },
-      "required": [
-        "shell_environment_policy"
-      ],
       "type": "object"
     },
     "MarketplaceConfig": {
@@ -2646,6 +2681,18 @@
         },
         "inherit": {
           "$ref": "#/definitions/ShellEnvironmentPolicyInherit"
+        },
+        "path_append": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "path_prepend": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "set": {
           "additionalProperties": {
@@ -5213,6 +5260,8 @@
         "ignore_default_excludes": null,
         "include_only": null,
         "inherit": null,
+        "path_append": null,
+        "path_prepend": null,
         "set": null
       }
     },

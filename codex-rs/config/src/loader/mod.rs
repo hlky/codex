@@ -55,7 +55,8 @@ const SYSTEM_CONFIG_TOML_FILE_UNIX: &str = "/etc/codex/config.toml";
 const DEFAULT_PROGRAM_DATA_DIR_WINDOWS: &str = r"C:\ProgramData";
 
 // Project-local config comes from repository contents, so it should not get to
-// choose where a user's credentials are sent or which local commands are run.
+// choose where a user's credentials are sent. Command-environment overlays are
+// still gated by project trust before project-local config is enabled.
 // These settings are still supported from user, system, managed, and runtime
 // config layers.
 const PROJECT_LOCAL_CONFIG_DENYLIST: &[&str] = &[
@@ -64,8 +65,6 @@ const PROJECT_LOCAL_CONFIG_DENYLIST: &[&str] = &[
     "apps_mcp_product_sku",
     "model_provider",
     "model_providers",
-    "local_environments",
-    "default_local_environment",
     "notify",
     "profile",
     "profiles",

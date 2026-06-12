@@ -207,7 +207,8 @@ pub type EnvironmentVariablePattern = WildMatchPattern<'*', '?'>;
 ///    exclude pattern(s), which are: `"*KEY*"`, `"*SECRET*"`, and `"*TOKEN*"`.
 /// 3. If `exclude` is not empty, filter the map using the provided patterns.
 /// 4. Insert any entries from `r#set` into the map.
-/// 5. If non-empty, filter the map using the `include_only` patterns.
+/// 5. Prepend and append any configured `PATH` entries.
+/// 6. If non-empty, filter the map using the `include_only` patterns.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShellEnvironmentPolicy {
     /// Starting point when building the environment.
@@ -223,6 +224,12 @@ pub struct ShellEnvironmentPolicy {
     /// (key, value) pairs to insert in the environment.
     pub r#set: HashMap<String, String>,
 
+    /// Path entries to prepend to PATH using the platform separator.
+    pub path_prepend: Vec<String>,
+
+    /// Path entries to append to PATH using the platform separator.
+    pub path_append: Vec<String>,
+
     /// Environment variable names to retain in the environment.
     pub include_only: Vec<EnvironmentVariablePattern>,
 
@@ -237,6 +244,8 @@ impl Default for ShellEnvironmentPolicy {
             ignore_default_excludes: true,
             exclude: Vec::new(),
             r#set: HashMap::new(),
+            path_prepend: Vec::new(),
+            path_append: Vec::new(),
             include_only: Vec::new(),
             use_profile: false,
         }

@@ -37,6 +37,9 @@ use codex_config::types::ApprovalsReviewer;
 use codex_config::types::BundledSkillsConfig;
 use codex_config::types::FeedbackConfigToml;
 use codex_config::types::HistoryPersistence;
+use codex_config::types::LocalEnvironmentScriptShell;
+use codex_config::types::LocalEnvironmentScriptToml;
+use codex_config::types::LocalEnvironmentSourceConfig;
 use codex_config::types::LocalEnvironmentToml;
 use codex_config::types::McpServerEnvVar;
 use codex_config::types::McpServerOAuthConfig;
@@ -217,14 +220,17 @@ async fn load_config_loads_named_local_environments_and_default_selection() -> s
                 "msvc".to_string(),
                 LocalEnvironmentToml {
                     description: Some("MSVC toolchain".to_string()),
-                    shell_environment_policy: ShellEnvironmentPolicyToml {
+                    shell_environment_policy: Some(ShellEnvironmentPolicyToml {
                         inherit: Some(ShellEnvironmentPolicyInherit::None),
                         ignore_default_excludes: Some(true),
                         include_only: Some(Vec::new()),
                         exclude: Some(Vec::new()),
                         r#set: Some(HashMap::from([("CC".to_string(), "cl.exe".to_string())])),
+                        path_prepend: Some(vec!["C:\\toolchain\\bin".to_string()]),
+                        path_append: Some(Vec::new()),
                         experimental_use_profile: Some(false),
-                    },
+                    }),
+                    script: None,
                 },
             )]),
             default_local_environment: Some("msvc".to_string()),
@@ -248,20 +254,113 @@ async fn load_config_loads_named_local_environments_and_default_selection() -> s
         local_environment.description.as_deref(),
         Some("MSVC toolchain")
     );
-    assert_eq!(
-        local_environment.shell_environment_policy.inherit,
-        ShellEnvironmentPolicyInherit::None
-    );
-    assert!(
-        local_environment
-            .shell_environment_policy
-            .ignore_default_excludes
-    );
-    assert_eq!(
-        local_environment.shell_environment_policy.r#set.get("CC"),
-        Some(&"cl.exe".to_string())
-    );
+    match &local_environment.source {
+        LocalEnvironmentSourceConfig::Static(shell_environment_policy) => {
+            assert_eq!(
+                shell_environment_policy.inherit,
+                ShellEnvironmentPolicyInherit::None
+            );
+            assert!(shell_environment_policy.ignore_default_excludes);
+            assert_eq!(
+                shell_environment_policy.r#set.get("CC"),
+                Some(&"cl.exe".to_string())
+            );
+            assert_eq!(
+                shell_environment_policy.path_prepend,
+                vec!["C:\\toolchain\\bin".to_string()]
+            );
+            assert_eq!(shell_environment_policy.path_append, Vec::<String>::new());
+        }
+        LocalEnvironmentSourceConfig::Script(_) => {
+            panic!("expected a static local environment source")
+        }
+    }
     Ok(())
+}
+
+#[tokio::test]
+async fn load_config_loads_script_local_environment() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let script_path = codex_home.path().join("activate-env.sh");
+    std::fs::write(&script_path, "export LOCAL_ENV=1\n")?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            local_environments: BTreeMap::from([(
+                "dynamic".to_string(),
+                LocalEnvironmentToml {
+                    description: Some("Dynamic script".to_string()),
+                    shell_environment_policy: None,
+                    script: Some(LocalEnvironmentScriptToml {
+                        script: AbsolutePathBuf::from_absolute_path(&script_path)?,
+                        shell: Some(LocalEnvironmentScriptShell::Sh),
+                        args: vec!["--flag".to_string()],
+                        cwd: None,
+                    }),
+                },
+            )]),
+            default_local_environment: Some("dynamic".to_string()),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    let local_environment = config
+        .local_environments
+        .get("dynamic")
+        .expect("dynamic local environment should load");
+    match &local_environment.source {
+        LocalEnvironmentSourceConfig::Script(script) => {
+            assert_eq!(
+                script.script,
+                AbsolutePathBuf::from_absolute_path(&script_path)?
+            );
+            assert_eq!(script.shell, LocalEnvironmentScriptShell::Sh);
+            assert_eq!(script.args, vec!["--flag".to_string()]);
+        }
+        LocalEnvironmentSourceConfig::Static(_) => {
+            panic!("expected a script local environment source")
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_config_rejects_local_environment_with_multiple_sources() {
+    let codex_home = tempdir().expect("tempdir");
+    let script_path = codex_home.path().join("activate-env.sh");
+    std::fs::write(&script_path, "export LOCAL_ENV=1\n").expect("write script");
+    let err = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            local_environments: BTreeMap::from([(
+                "invalid".to_string(),
+                LocalEnvironmentToml {
+                    description: None,
+                    shell_environment_policy: Some(ShellEnvironmentPolicyToml::default()),
+                    script: Some(LocalEnvironmentScriptToml {
+                        script: AbsolutePathBuf::from_absolute_path(&script_path)
+                            .expect("script path should be absolute"),
+                        shell: Some(LocalEnvironmentScriptShell::Sh),
+                        args: Vec::new(),
+                        cwd: None,
+                    }),
+                },
+            )]),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await
+    .expect_err("multiple local environment sources should fail");
+
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("local_environments.invalid must define exactly one source"),
+        "{msg}"
+    );
 }
 
 #[tokio::test]

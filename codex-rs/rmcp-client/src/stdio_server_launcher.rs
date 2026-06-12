@@ -621,6 +621,8 @@ mod tests {
                 .map(|pattern| EnvironmentVariablePattern::new_case_insensitive(pattern))
                 .collect(),
             r#set: exec_policy.r#set,
+            path_prepend: Vec::new(),
+            path_append: Vec::new(),
             include_only: exec_policy
                 .include_only
                 .iter()

@@ -768,6 +768,7 @@ impl AppServerSession {
                     additional_context: None,
                     environments: None,
                     cwd: Some(cwd),
+                    local_environment: None,
                     runtime_workspace_roots: Some(workspace_roots.to_vec()),
                     approval_policy: Some(approval_policy),
                     approvals_reviewer: Some(approvals_reviewer.into()),

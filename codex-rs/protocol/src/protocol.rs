@@ -5267,6 +5267,8 @@ mod tests {
         let item = TurnContextItem {
             turn_id: None,
             cwd: test_path_buf("/tmp"),
+            available_local_environments: None,
+            local_environment: None,
             workspace_roots: None,
             current_date: None,
             timezone: None,

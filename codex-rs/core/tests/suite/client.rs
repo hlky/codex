@@ -2364,7 +2364,6 @@ async fn includes_developer_instructions_file_message_in_request() {
 
     codex
         .submit(Op::UserInput {
-            environments: None,
             items: vec![UserInput::Text {
                 text: "hello".into(),
                 text_elements: Vec::new(),

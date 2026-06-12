@@ -3,6 +3,7 @@ use crate::SkillLoadOutcome;
 use crate::agents_md::LoadedAgentsMd;
 use crate::config::GhostSnapshotConfig;
 use crate::environment_selection::ResolvedTurnEnvironments;
+use crate::local_environments::resolve_local_environment_shell_policy;
 use codex_core_skills::HostLoadedSkills;
 use codex_model_provider::SharedModelProvider;
 use codex_model_provider::create_model_provider;
@@ -833,8 +834,25 @@ impl Session {
                 .local_environments
                 .get(selected_local_environment)
             {
-                per_turn_config.permissions.shell_environment_policy =
-                    local_environment.shell_environment_policy.clone();
+                match resolve_local_environment_shell_policy(
+                    &self.local_environment_cache,
+                    selected_local_environment,
+                    local_environment,
+                )
+                .await
+                {
+                    Ok(shell_environment_policy) => {
+                        per_turn_config.permissions.shell_environment_policy =
+                            shell_environment_policy;
+                    }
+                    Err(error) => {
+                        warn!(
+                            error = %error,
+                            local_environment = selected_local_environment,
+                            "failed to resolve local environment for turn"
+                        );
+                    }
+                }
             } else {
                 warn!(
                     local_environment = selected_local_environment,

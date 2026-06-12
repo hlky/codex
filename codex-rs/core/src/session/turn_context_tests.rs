@@ -2,6 +2,7 @@ use super::*;
 use crate::session::tests::make_session_and_context;
 use crate::session::tests::make_session_configuration_for_tests;
 use codex_config::types::LocalEnvironmentConfig;
+use codex_config::types::LocalEnvironmentSourceConfig;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
 use pretty_assertions::assert_eq;
@@ -18,28 +19,32 @@ async fn resolve_turn_local_environment_state_prefers_turn_override() {
             "msvc".to_string(),
             LocalEnvironmentConfig {
                 description: Some("MSVC toolchain".to_string()),
-                shell_environment_policy: ShellEnvironmentPolicy {
+                source: LocalEnvironmentSourceConfig::Static(ShellEnvironmentPolicy {
                     inherit: ShellEnvironmentPolicyInherit::None,
                     ignore_default_excludes: true,
                     include_only: Vec::new(),
                     exclude: Vec::new(),
                     r#set: HashMap::from([("CC".to_string(), "cl.exe".to_string())]),
+                    path_prepend: Vec::new(),
+                    path_append: Vec::new(),
                     use_profile: false,
-                },
+                }),
             },
         ),
         (
             "rocm".to_string(),
             LocalEnvironmentConfig {
                 description: Some("ROCm toolchain".to_string()),
-                shell_environment_policy: ShellEnvironmentPolicy {
+                source: LocalEnvironmentSourceConfig::Static(ShellEnvironmentPolicy {
                     inherit: ShellEnvironmentPolicyInherit::Core,
                     ignore_default_excludes: true,
                     include_only: Vec::new(),
                     exclude: Vec::new(),
                     r#set: HashMap::from([("ACCELERATOR".to_string(), "rocm".to_string())]),
+                    path_prepend: Vec::new(),
+                    path_append: Vec::new(),
                     use_profile: false,
-                },
+                }),
             },
         ),
     ]);
@@ -71,28 +76,32 @@ async fn new_turn_context_from_configuration_applies_selected_local_environment_
             "msvc".to_string(),
             LocalEnvironmentConfig {
                 description: Some("MSVC toolchain".to_string()),
-                shell_environment_policy: ShellEnvironmentPolicy {
+                source: LocalEnvironmentSourceConfig::Static(ShellEnvironmentPolicy {
                     inherit: ShellEnvironmentPolicyInherit::None,
                     ignore_default_excludes: true,
                     include_only: Vec::new(),
                     exclude: Vec::new(),
                     r#set: HashMap::from([("CC".to_string(), "cl.exe".to_string())]),
+                    path_prepend: Vec::new(),
+                    path_append: Vec::new(),
                     use_profile: false,
-                },
+                }),
             },
         ),
         (
             "rocm".to_string(),
             LocalEnvironmentConfig {
                 description: Some("ROCm toolchain".to_string()),
-                shell_environment_policy: ShellEnvironmentPolicy {
+                source: LocalEnvironmentSourceConfig::Static(ShellEnvironmentPolicy {
                     inherit: ShellEnvironmentPolicyInherit::Core,
                     ignore_default_excludes: true,
                     include_only: Vec::new(),
                     exclude: Vec::new(),
                     r#set: HashMap::from([("ACCELERATOR".to_string(), "rocm".to_string())]),
+                    path_prepend: Vec::new(),
+                    path_append: Vec::new(),
                     use_profile: false,
-                },
+                }),
             },
         ),
     ]);
