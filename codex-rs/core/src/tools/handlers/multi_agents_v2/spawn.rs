@@ -60,7 +60,7 @@ async fn handle_spawn_agent(
     let session_source = turn.session_source.clone();
     let child_depth = next_thread_spawn_depth(&session_source);
     let mut config =
-        build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
+        build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref()).await?;
     if let Some(service_tier) = args.service_tier.as_ref() {
         config.service_tier = Some(service_tier.clone());
     }

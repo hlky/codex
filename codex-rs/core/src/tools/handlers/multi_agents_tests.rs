@@ -2,6 +2,7 @@ use super::*;
 use crate::LoadedAgentsMd;
 use crate::ThreadManager;
 use crate::config::AgentRoleConfig;
+use crate::config::ConfigBuilder;
 use crate::config::DEFAULT_AGENT_MAX_DEPTH;
 use crate::function_tool::FunctionCallError;
 use crate::init_state_db;
@@ -18,6 +19,8 @@ use crate::tools::handlers::multi_agents_v2::WaitAgentHandler as WaitAgentHandle
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
+use codex_hooks::HooksConfig;
+use codex_hooks::list_hooks;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider::create_model_provider;
@@ -63,6 +66,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tempfile::tempdir;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
@@ -4493,31 +4497,34 @@ async fn build_agent_spawn_config_uses_turn_context_values() {
         .set(AskForApproval::OnRequest)
         .expect("approval policy set");
 
-    let config = build_agent_spawn_config(&base_instructions, &turn).expect("spawn config");
-    let mut expected = (*turn.config).clone();
-    expected.base_instructions = Some(base_instructions.text);
-    expected.model = Some(turn.model_info.slug.clone());
-    expected.model_provider = turn.provider.info().clone();
-    expected.model_reasoning_effort = turn.reasoning_effort.clone();
-    expected.model_reasoning_summary = Some(turn.reasoning_summary);
-    expected.developer_instructions = turn.developer_instructions.clone();
-    expected.compact_prompt = turn.compact_prompt.clone();
-    expected.permissions.shell_environment_policy = turn.shell_environment_policy.clone();
-    expected.codex_linux_sandbox_exe = turn.codex_linux_sandbox_exe.clone();
+    let config = build_agent_spawn_config(&base_instructions, &turn)
+        .await
+        .expect("spawn config");
+
+    assert_eq!(config.base_instructions, Some(base_instructions.text));
+    assert_eq!(config.model, Some(turn.model_info.slug.clone()));
+    assert_eq!(config.model_provider, turn.provider.info().clone());
+    assert_eq!(config.model_reasoning_effort, turn.reasoning_effort.clone());
+    assert_eq!(config.model_reasoning_summary, Some(turn.reasoning_summary));
+    assert_eq!(
+        config.developer_instructions,
+        turn.developer_instructions.clone()
+    );
+    assert_eq!(config.compact_prompt, turn.compact_prompt.clone());
+    assert_eq!(
+        config.permissions.shell_environment_policy,
+        turn.shell_environment_policy
+    );
+    assert_eq!(config.codex_linux_sandbox_exe, turn.codex_linux_sandbox_exe);
+    assert_eq!(
+        config.permissions.approval_policy.value(),
+        AskForApproval::OnRequest
+    );
+    assert_eq!(config.permissions.permission_profile(), &permission_profile);
     #[allow(deprecated)]
     {
-        expected.cwd = turn.cwd.clone();
+        assert_eq!(config.cwd, turn.cwd);
     }
-    expected
-        .permissions
-        .approval_policy
-        .set(AskForApproval::OnRequest)
-        .expect("approval policy set");
-    expected
-        .permissions
-        .set_permission_profile(permission_profile)
-        .expect("permission profile set");
-    assert_eq!(config, expected);
 }
 
 #[tokio::test]
@@ -4534,9 +4541,175 @@ async fn build_agent_spawn_config_preserves_base_user_instructions() {
         text: "base".to_string(),
     };
 
-    let config = build_agent_spawn_config(&base_instructions, &turn).expect("spawn config");
+    let config = build_agent_spawn_config(&base_instructions, &turn)
+        .await
+        .expect("spawn config");
 
     assert_eq!(config.user_instructions, base_config.user_instructions);
+}
+
+#[tokio::test]
+async fn build_agent_spawn_config_reloads_project_config_for_turn_cwd() {
+    let (_session, mut turn) = make_session_and_context().await;
+    let codex_home = tempdir().expect("tempdir");
+    let parent_cwd = tempdir().expect("tempdir");
+    let project_root = codex_home.path().join("worktree");
+    let dot_codex = project_root.join(".codex");
+    std::fs::create_dir_all(&dot_codex).expect("create project config dir");
+    std::fs::write(project_root.join(".git"), "gitdir: here\n").expect("write .git");
+    std::fs::write(
+        dot_codex.join("config.toml"),
+        r#"
+default_local_environment = "worker"
+
+[local_environments.worker]
+description = "worktree env"
+
+[local_environments.worker.shell_environment_policy]
+inherit = "all"
+set = { DINOML_CACHE_DIR = "worktree-cache" }
+"#,
+    )
+    .expect("write project config");
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            r#"[projects.{:?}]
+trust_level = "trusted"
+"#,
+            project_root.display().to_string()
+        ),
+    )
+    .expect("write user config");
+
+    let parent_config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(parent_cwd.path().to_path_buf()))
+        .build()
+        .await
+        .expect("load parent config");
+    assert!(parent_config.local_environments.is_empty());
+
+    turn.config = Arc::new(parent_config);
+    #[allow(deprecated)]
+    {
+        turn.cwd = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(&project_root)
+            .expect("absolute project root");
+    }
+
+    let config = build_agent_spawn_config(
+        &BaseInstructions {
+            text: "base".to_string(),
+        },
+        &turn,
+    )
+    .await
+    .expect("spawn config");
+
+    assert_eq!(config.default_local_environment.as_deref(), Some("worker"));
+    assert_eq!(
+        config.local_environments.keys().collect::<Vec<_>>(),
+        vec![&"worker".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn build_agent_spawn_config_preserves_trusted_subagent_hooks() {
+    let (_session, mut turn) = make_session_and_context().await;
+    let codex_home = tempdir().expect("tempdir");
+    let parent_cwd = tempdir().expect("tempdir");
+    std::fs::write(
+        codex_home.path().join("hooks.json"),
+        serde_json::json!({
+            "hooks": {
+                "SubagentStart": [{
+                    "matcher": "worker",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "python3 subagent_start_hook.py",
+                    }]
+                }]
+            }
+        })
+        .to_string(),
+    )
+    .expect("write hooks config");
+
+    let mut parent_config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(parent_cwd.path().to_path_buf()))
+        .build()
+        .await
+        .expect("load parent config");
+    let discovered = list_hooks(HooksConfig {
+        feature_enabled: true,
+        config_layer_stack: Some(parent_config.config_layer_stack.clone()),
+        ..HooksConfig::default()
+    });
+    assert!(
+        !discovered.hooks.is_empty(),
+        "trusted hook fixture should load"
+    );
+    let mut user_config = parent_config
+        .config_layer_stack
+        .effective_user_config()
+        .unwrap_or_else(|| toml::Value::Table(Default::default()));
+    let user_table = user_config
+        .as_table_mut()
+        .expect("user config should be a table");
+    let hooks_table = user_table
+        .entry("hooks")
+        .or_insert_with(|| toml::Value::Table(Default::default()))
+        .as_table_mut()
+        .expect("hooks config should be a table");
+    let state_table = hooks_table
+        .entry("state")
+        .or_insert_with(|| toml::Value::Table(Default::default()))
+        .as_table_mut()
+        .expect("hook state config should be a table");
+    for hook in discovered.hooks {
+        let mut hook_state = toml::Value::Table(Default::default());
+        hook_state
+            .as_table_mut()
+            .expect("hook state should be a table")
+            .insert(
+                "trusted_hash".to_string(),
+                toml::Value::String(hook.current_hash),
+            );
+        state_table.insert(hook.key, hook_state);
+    }
+    let user_config_file = parent_config
+        .config_layer_stack
+        .get_user_config_file()
+        .cloned()
+        .expect("user config file");
+    parent_config.config_layer_stack = parent_config
+        .config_layer_stack
+        .with_user_config(&user_config_file, user_config);
+
+    turn.config = Arc::new(parent_config);
+
+    let config = build_agent_spawn_config(
+        &BaseInstructions {
+            text: "base".to_string(),
+        },
+        &turn,
+    )
+    .await
+    .expect("spawn config");
+
+    let hook_list = list_hooks(HooksConfig {
+        feature_enabled: config.features.enabled(Feature::CodexHooks),
+        config_layer_stack: Some(config.config_layer_stack.clone()),
+        ..HooksConfig::default()
+    });
+
+    assert!(
+        hook_list
+            .hooks
+            .iter()
+            .any(|hook| hook.matcher.as_deref() == Some("worker"))
+    );
 }
 
 #[tokio::test]

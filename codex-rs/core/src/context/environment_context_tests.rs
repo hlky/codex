@@ -248,6 +248,7 @@ fn serialize_environment_context_with_local_environments() {
         network: None,
         file_system_sandbox_policy: None,
         model: "gpt-5".to_string(),
+        comp_hash: None,
         personality: None,
         collaboration_mode: None,
         multi_agent_version: None,
