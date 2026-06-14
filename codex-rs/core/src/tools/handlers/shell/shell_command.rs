@@ -27,6 +27,7 @@ use codex_tools::ToolSpec;
 
 use super::super::shell_spec::CommandToolOptions;
 use super::super::shell_spec::create_shell_command_tool;
+use super::super::workdir_shell_environment::shell_environment_policy_for_command_cwd;
 use super::RunExecLikeArgs;
 use super::run_exec_like;
 use super::shell_command_payload_command;
@@ -88,6 +89,7 @@ impl ShellCommandHandler {
         turn_context: &TurnContext,
         thread_id: ThreadId,
         allow_login_shell: bool,
+        shell_environment_policy: &codex_protocol::config_types::ShellEnvironmentPolicy,
     ) -> Result<ExecParams, FunctionCallError> {
         let shell = session.user_shell();
         let use_login_shell = Self::resolve_use_login_shell(params.login, allow_login_shell)?;
@@ -100,7 +102,7 @@ impl ShellCommandHandler {
             cwd,
             expiration: params.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
-            env: create_env(&turn_context.shell_environment_policy, Some(thread_id)),
+            env: create_env(shell_environment_policy, Some(thread_id)),
             network: turn_context.network.clone(),
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
             windows_sandbox_level: turn_context.windows_sandbox_level,
@@ -179,6 +181,9 @@ impl ShellCommandHandler {
             &workdir,
         )
         .await;
+        let shell_environment_policy =
+            shell_environment_policy_for_command_cwd(session.as_ref(), turn.as_ref(), &workdir)
+                .await?;
         let prefix_rule = params.prefix_rule.clone();
         let exec_params = Self::to_exec_params(
             &params,
@@ -186,6 +191,7 @@ impl ShellCommandHandler {
             turn.as_ref(),
             session.thread_id,
             turn.config.permissions.allow_login_shell,
+            &shell_environment_policy,
         )?;
         let shell_type = Some(session.user_shell().shell_type);
         run_exec_like(RunExecLikeArgs {
@@ -194,6 +200,7 @@ impl ShellCommandHandler {
             cancellation_token,
             hook_command: params.command,
             shell_type,
+            shell_environment_policy,
             additional_permissions: params.additional_permissions.clone(),
             prefix_rule,
             session,

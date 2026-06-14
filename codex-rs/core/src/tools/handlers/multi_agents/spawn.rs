@@ -6,6 +6,9 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
+use crate::tools::handlers::multi_agents_common::build_agent_spawn_config_for_cwd;
+use crate::tools::handlers::multi_agents_common::resolve_spawn_workdir;
+use crate::tools::handlers::multi_agents_common::spawn_agent_environment_selections;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v1;
 use crate::turn_timing::now_unix_timestamp_ms;
@@ -65,6 +68,7 @@ async fn handle_spawn_agent(
     let session_source = turn.session_source.clone();
     let child_depth = next_thread_spawn_depth(&session_source);
     let max_depth = turn.config.agent_max_depth;
+    let spawn_cwd = resolve_spawn_workdir(turn.as_ref(), args.workdir.as_deref());
     if exceeds_thread_spawn_depth_limit(child_depth, max_depth) {
         return Err(FunctionCallError::RespondToModel(
             "Agent depth limit reached. Solve the task yourself.".to_string(),
@@ -84,8 +88,12 @@ async fn handle_spawn_agent(
             .into(),
         )
         .await;
-    let mut config =
-        build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref()).await?;
+    let mut config = build_agent_spawn_config_for_cwd(
+        &session.get_base_instructions().await,
+        turn.as_ref(),
+        spawn_cwd.as_ref(),
+    )
+    .await?;
     if let Some(service_tier) = args.service_tier.as_ref() {
         config.service_tier = Some(service_tier.clone());
     }
@@ -115,7 +123,6 @@ async fn handle_spawn_agent(
         args.service_tier.as_deref(),
     )
     .await?;
-    apply_spawn_agent_runtime_overrides(&mut config, turn.as_ref())?;
 
     let result = Box::pin(session.services.agent_control.spawn_agent_with_metadata(
         config,
@@ -131,7 +138,10 @@ async fn handle_spawn_agent(
             fork_parent_spawn_call_id: args.fork_context.then(|| call_id.clone()),
             fork_mode: args.fork_context.then_some(SpawnAgentForkMode::FullHistory),
             parent_thread_id: Some(session.thread_id),
-            environments: Some(turn.environments.to_selections()),
+            environments: Some(spawn_agent_environment_selections(
+                turn.as_ref(),
+                spawn_cwd.as_ref(),
+            )),
         },
     ))
     .await
@@ -219,6 +229,7 @@ impl CoreToolRuntime for Handler {
 struct SpawnAgentArgs {
     message: Option<String>,
     items: Option<Vec<UserInput>>,
+    workdir: Option<String>,
     agent_type: Option<String>,
     model: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,

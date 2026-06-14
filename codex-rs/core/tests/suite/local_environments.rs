@@ -166,7 +166,7 @@ fn write_dynamic_test_script(dir: &std::path::Path, value: &str) -> std::path::P
         &script_path,
         format!("@echo off\r\nset CODEX_DYNAMIC_SHELL={value}\r\n"),
     )
-    .expect("write windows test script");
+    .unwrap_or_else(|err| panic!("write windows test script: {err}"));
     script_path
 }
 
@@ -177,7 +177,7 @@ fn write_dynamic_test_script(dir: &std::path::Path, value: &str) -> std::path::P
         &script_path,
         format!("export CODEX_DYNAMIC_SHELL={value}\n"),
     )
-    .expect("write unix test script");
+    .unwrap_or_else(|err| panic!("write unix test script: {err}"));
     script_path
 }
 

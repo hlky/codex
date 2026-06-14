@@ -181,6 +181,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
             .expect("primary environment"),
         shell_mode: codex_tools::UnifiedExecShellMode::Direct,
         network: None,
+        shell_environment_policy: turn.shell_environment_policy.clone(),
         tty: true,
         sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
         additional_permissions: None,

@@ -4614,6 +4614,84 @@ trust_level = "trusted"
 }
 
 #[tokio::test]
+async fn build_agent_spawn_config_reloads_project_config_for_explicit_spawn_cwd() {
+    let (_session, mut turn) = make_session_and_context().await;
+    let codex_home = tempdir().expect("tempdir");
+    let parent_cwd = tempdir().expect("tempdir");
+    let project_root = codex_home.path().join("worktree");
+    let dot_codex = project_root.join(".codex");
+    std::fs::create_dir_all(&dot_codex).expect("create project config dir");
+    std::fs::write(project_root.join(".git"), "gitdir: here\n").expect("write .git");
+    std::fs::write(
+        dot_codex.join("config.toml"),
+        r#"
+default_local_environment = "worker"
+
+[shell_environment_policy]
+inherit = "all"
+set = { TEST_SUBAGENT_ENV = "worktree-value" }
+
+[local_environments.worker]
+description = "worktree env"
+
+[local_environments.worker.shell_environment_policy]
+inherit = "all"
+"#,
+    )
+    .expect("write project config");
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            r#"[projects.{:?}]
+trust_level = "trusted"
+"#,
+            project_root.display().to_string()
+        ),
+    )
+    .expect("write user config");
+
+    let parent_config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(parent_cwd.path().to_path_buf()))
+        .build()
+        .await
+        .expect("load parent config");
+    assert!(parent_config.local_environments.is_empty());
+    assert!(
+        !parent_config
+            .permissions
+            .shell_environment_policy
+            .r#set
+            .contains_key("TEST_SUBAGENT_ENV")
+    );
+
+    turn.config = Arc::new(parent_config);
+    let spawn_cwd = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(&project_root)
+        .expect("absolute project root");
+
+    let config = build_agent_spawn_config_for_cwd(
+        &BaseInstructions {
+            text: "base".to_string(),
+        },
+        &turn,
+        Some(&spawn_cwd),
+    )
+    .await
+    .expect("spawn config");
+
+    assert_eq!(config.cwd, spawn_cwd);
+    assert_eq!(config.default_local_environment.as_deref(), Some("worker"));
+    assert_eq!(
+        config
+            .permissions
+            .shell_environment_policy
+            .r#set
+            .get("TEST_SUBAGENT_ENV"),
+        Some(&"worktree-value".to_string())
+    );
+}
+
+#[tokio::test]
 async fn build_agent_spawn_config_preserves_trusted_subagent_hooks() {
     let (_session, mut turn) = make_session_and_context().await;
     let codex_home = tempdir().expect("tempdir");
@@ -4709,6 +4787,111 @@ async fn build_agent_spawn_config_preserves_trusted_subagent_hooks() {
             .hooks
             .iter()
             .any(|hook| hook.matcher.as_deref() == Some("worker"))
+    );
+}
+
+#[tokio::test]
+async fn multi_agent_v2_spawn_workdir_reloads_child_project_config() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.thread_id = root.thread_id;
+
+    let codex_home = tempdir().expect("tempdir");
+    let parent_cwd = tempdir().expect("tempdir");
+    let child_root = codex_home.path().join("worker-a");
+    let dot_codex = child_root.join(".codex");
+    std::fs::create_dir_all(&dot_codex).expect("create child config dir");
+    std::fs::write(child_root.join(".git"), "gitdir: here\n").expect("write .git");
+    std::fs::write(
+        dot_codex.join("config.toml"),
+        r#"
+default_local_environment = "worker"
+
+[shell_environment_policy]
+inherit = "all"
+set = { TEST_SUBAGENT_ENV = "worker-a" }
+
+[local_environments.worker]
+description = "worker env"
+
+[local_environments.worker.shell_environment_policy]
+inherit = "all"
+"#,
+    )
+    .expect("write child config");
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            r#"[projects.{:?}]
+trust_level = "trusted"
+"#,
+            child_root.display().to_string()
+        ),
+    )
+    .expect("write user config");
+
+    let mut config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(parent_cwd.path().to_path_buf()))
+        .build()
+        .await
+        .expect("load parent config");
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    set_turn_config(&mut turn, config);
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+
+    SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            session.clone(),
+            turn.clone(),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "use worker-a",
+                "task_name": "worker_a",
+                "workdir": child_root.display().to_string()
+            })),
+        ))
+        .await
+        .expect("spawn_agent should succeed");
+
+    let child_thread_id = session
+        .services
+        .agent_control
+        .resolve_agent_reference(session.thread_id, &turn.session_source, "worker_a")
+        .await
+        .expect("relative path should resolve");
+    let child_thread = manager
+        .get_thread(child_thread_id)
+        .await
+        .expect("child thread should exist");
+    let child_snapshot = child_thread.config_snapshot().await;
+    let child_config = child_thread.config().await;
+
+    let expected_cwd = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(&child_root)
+        .expect("absolute child root");
+    assert_eq!(child_snapshot.cwd(), &expected_cwd);
+    assert_eq!(child_snapshot.local_environment.as_deref(), Some("worker"));
+    assert_eq!(child_config.cwd, expected_cwd);
+    assert_eq!(
+        child_config.default_local_environment.as_deref(),
+        Some("worker")
+    );
+    assert_eq!(
+        child_config
+            .permissions
+            .shell_environment_policy
+            .r#set
+            .get("TEST_SUBAGENT_ENV"),
+        Some(&"worker-a".to_string())
     );
 }
 

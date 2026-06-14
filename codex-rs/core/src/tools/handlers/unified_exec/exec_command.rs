@@ -15,6 +15,7 @@ use crate::tools::handlers::parse_arguments_with_base_path;
 use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::handlers::rewrite_function_string_argument;
 use crate::tools::handlers::updated_hook_command;
+use crate::tools::handlers::workdir_shell_environment::shell_environment_policy_for_command_cwd;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::PostToolUsePayload;
@@ -161,6 +162,8 @@ impl ExecCommandHandler {
         let command = resolved_command.command;
         let shell_type = resolved_command.shell_type;
         let command_for_display = codex_shell_command::parse_command::shlex_join(&command);
+        let shell_environment_policy =
+            shell_environment_policy_for_command_cwd(session.as_ref(), turn.as_ref(), &cwd).await?;
 
         let ExecCommandArgs {
             tty,
@@ -274,6 +277,7 @@ impl ExecCommandHandler {
                     environment,
                     shell_mode,
                     network: context.turn.network.clone(),
+                    shell_environment_policy,
                     tty,
                     sandbox_permissions: effective_additional_permissions.sandbox_permissions,
                     additional_permissions: normalized_additional_permissions,

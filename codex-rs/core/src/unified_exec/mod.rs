@@ -29,6 +29,7 @@ use std::sync::Weak;
 
 use codex_exec_server::Environment;
 use codex_network_proxy::NetworkProxy;
+use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_tools::UnifiedExecShellMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -100,6 +101,7 @@ pub(crate) struct ExecCommandRequest {
     pub environment: Arc<Environment>,
     pub shell_mode: UnifiedExecShellMode,
     pub network: Option<NetworkProxy>,
+    pub shell_environment_policy: ShellEnvironmentPolicy,
     pub tty: bool,
     pub sandbox_permissions: SandboxPermissions,
     pub additional_permissions: Option<AdditionalPermissionProfile>,

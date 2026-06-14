@@ -1027,10 +1027,8 @@ impl UnifiedExecProcessManager {
         cwd: AbsolutePathBuf,
         context: &UnifiedExecContext,
     ) -> Result<(UnifiedExecProcess, Option<DeferredNetworkApproval>), UnifiedExecError> {
-        let local_policy_env = create_env(
-            &context.turn.shell_environment_policy,
-            /*thread_id*/ None,
-        );
+        let local_policy_env =
+            create_env(&request.shell_environment_policy, /*thread_id*/ None);
         let mut env = local_policy_env.clone();
         env.insert(
             CODEX_THREAD_ID_ENV_VAR.to_string(),
@@ -1038,7 +1036,7 @@ impl UnifiedExecProcessManager {
         );
         let env = apply_unified_exec_env(env);
         let exec_server_env_config = ExecServerEnvConfig {
-            policy: exec_env_policy_from_shell_policy(&context.turn.shell_environment_policy),
+            policy: exec_env_policy_from_shell_policy(&request.shell_environment_policy),
             local_policy_env,
         };
         let mut orchestrator = ToolOrchestrator::new();
@@ -1070,7 +1068,7 @@ impl UnifiedExecProcessManager {
             environment: Arc::clone(&request.environment),
             env,
             exec_server_env_config: Some(exec_server_env_config),
-            explicit_env_overrides: context.turn.shell_environment_policy.r#set.clone(),
+            explicit_env_overrides: request.shell_environment_policy.r#set.clone(),
             network: request.network.clone(),
             tty: request.tty,
             sandbox_permissions: request.sandbox_permissions,

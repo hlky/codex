@@ -4,6 +4,9 @@ use crate::agent::control::SpawnAgentOptions;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
+use crate::tools::handlers::multi_agents_common::build_agent_spawn_config_for_cwd;
+use crate::tools::handlers::multi_agents_common::resolve_spawn_workdir;
+use crate::tools::handlers::multi_agents_common::spawn_agent_environment_selections;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v2;
 use crate::turn_timing::now_unix_timestamp_ms;
@@ -59,8 +62,13 @@ async fn handle_spawn_agent(
     let initial_operation = parse_collab_input(Some(args.message), /*items*/ None)?;
     let session_source = turn.session_source.clone();
     let child_depth = next_thread_spawn_depth(&session_source);
-    let mut config =
-        build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref()).await?;
+    let spawn_cwd = resolve_spawn_workdir(turn.as_ref(), args.workdir.as_deref());
+    let mut config = build_agent_spawn_config_for_cwd(
+        &session.get_base_instructions().await,
+        turn.as_ref(),
+        spawn_cwd.as_ref(),
+    )
+    .await?;
     if let Some(service_tier) = args.service_tier.as_ref() {
         config.service_tier = Some(service_tier.clone());
     }
@@ -90,7 +98,6 @@ async fn handle_spawn_agent(
         args.service_tier.as_deref(),
     )
     .await?;
-    apply_spawn_agent_runtime_overrides(&mut config, turn.as_ref())?;
 
     let spawn_source = thread_spawn_source(
         session.thread_id,
@@ -128,7 +135,10 @@ async fn handle_spawn_agent(
                 fork_parent_spawn_call_id: fork_mode.as_ref().map(|_| call_id.clone()),
                 fork_mode,
                 parent_thread_id: Some(session.thread_id),
-                environments: Some(turn.environments.to_selections()),
+                environments: Some(spawn_agent_environment_selections(
+                    turn.as_ref(),
+                    spawn_cwd.as_ref(),
+                )),
             },
         ),
     )
@@ -187,6 +197,7 @@ impl CoreToolRuntime for Handler {
 struct SpawnAgentArgs {
     message: String,
     task_name: String,
+    workdir: Option<String>,
     agent_type: Option<String>,
     model: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,

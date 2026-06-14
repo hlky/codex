@@ -23,6 +23,7 @@ use crate::tools::runtimes::shell::ShellRequest;
 use crate::tools::runtimes::shell::ShellRuntime;
 use crate::tools::runtimes::shell::ShellRuntimeBackend;
 use crate::tools::sandboxing::ToolCtx;
+use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_tools::ToolName;
@@ -48,6 +49,7 @@ struct RunExecLikeArgs {
     cancellation_token: CancellationToken,
     hook_command: String,
     shell_type: Option<ShellType>,
+    shell_environment_policy: ShellEnvironmentPolicy,
     additional_permissions: Option<AdditionalPermissionProfile>,
     prefix_rule: Option<Vec<String>>,
     session: Arc<crate::session::session::Session>,
@@ -64,6 +66,7 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
         cancellation_token,
         hook_command,
         shell_type,
+        shell_environment_policy,
         additional_permissions,
         prefix_rule,
         session,
@@ -80,7 +83,7 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
     };
     let fs = turn_environment.environment.get_filesystem();
 
-    let explicit_env_overrides = turn.shell_environment_policy.r#set.clone();
+    let explicit_env_overrides = shell_environment_policy.r#set.clone();
     let exec_permission_approvals_enabled =
         session.features().enabled(Feature::ExecPermissionApprovals);
     let requested_additional_permissions = additional_permissions.clone();

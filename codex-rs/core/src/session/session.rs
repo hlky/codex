@@ -502,6 +502,19 @@ impl Session {
         self.services.agent_control.session_id()
     }
 
+    pub(crate) async fn resolve_local_environment_shell_policy(
+        &self,
+        name: &str,
+        environment: &codex_config::types::LocalEnvironmentConfig,
+    ) -> anyhow::Result<codex_protocol::config_types::ShellEnvironmentPolicy> {
+        crate::local_environments::resolve_local_environment_shell_policy(
+            &self.local_environment_cache,
+            name,
+            environment,
+        )
+        .await
+    }
+
     #[instrument(name = "session_init", level = "info", skip_all)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(

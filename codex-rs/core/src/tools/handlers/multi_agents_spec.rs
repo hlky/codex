@@ -561,6 +561,13 @@ fn spawn_agent_common_properties_v1(agent_type_description: &str) -> BTreeMap<St
                     .to_string(),
             )),
         ),
+        (
+            "workdir".to_string(),
+            JsonSchema::string(Some(
+                "Optional working directory root for the new agent. Relative paths resolve against the current turn cwd."
+                    .to_string(),
+            )),
+        ),
         ("items".to_string(), create_collab_input_items_schema()),
         (
             "agent_type".to_string(),
@@ -603,6 +610,13 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
                 "Initial plain-text task for the new agent.".to_string(),
             ))
             .with_encrypted(),
+        ),
+        (
+            "workdir".to_string(),
+            JsonSchema::string(Some(
+                "Optional working directory root for the new agent. Relative paths resolve against the current turn cwd."
+                    .to_string(),
+            )),
         ),
         (
             "agent_type".to_string(),

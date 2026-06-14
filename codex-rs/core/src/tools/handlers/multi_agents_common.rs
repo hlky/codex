@@ -1,18 +1,14 @@
 use crate::agent::AgentStatus;
 use crate::config::Config;
-use crate::config::ConfigBuilder;
-use crate::config::ConfigOverrides;
 use crate::config::DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS;
 use crate::config::HARD_MAX_MULTI_AGENT_V2_TIMEOUT_MS;
-use crate::config::LoaderOverrides;
 use crate::function_tool::FunctionCallError;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_exec_server::LOCAL_FS;
+use crate::tools::handlers::workdir_shell_environment::refreshed_config_for_cwd;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
@@ -26,7 +22,9 @@ use codex_protocol::protocol::CollabAgentStatusEntry;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::user_input::UserInput;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -210,13 +208,27 @@ pub(crate) async fn build_agent_spawn_config(
     base_instructions: &BaseInstructions,
     turn: &TurnContext,
 ) -> Result<Config, FunctionCallError> {
-    let mut config = build_spawn_agent_shared_config(turn).await?;
+    build_agent_spawn_config_for_cwd(base_instructions, turn, /*spawn_cwd*/ None).await
+}
+
+pub(crate) async fn build_agent_spawn_config_for_cwd(
+    base_instructions: &BaseInstructions,
+    turn: &TurnContext,
+    spawn_cwd: Option<&AbsolutePathBuf>,
+) -> Result<Config, FunctionCallError> {
+    let mut config = if let Some(spawn_cwd) = spawn_cwd {
+        build_spawn_agent_shared_config_for_cwd(turn, spawn_cwd).await?
+    } else {
+        build_spawn_agent_shared_config(turn).await?
+    };
     config.base_instructions = Some(base_instructions.text.clone());
     Ok(config)
 }
 
 pub(crate) fn build_agent_resume_config(turn: &TurnContext) -> Result<Config, FunctionCallError> {
-    let mut config = build_agent_shared_config((*turn.config).clone(), turn)?;
+    #[allow(deprecated)]
+    let turn_cwd = turn.cwd.clone();
+    let mut config = build_agent_shared_config((*turn.config).clone(), turn, &turn_cwd)?;
     // For resume, keep base instructions sourced from rollout/session metadata.
     config.base_instructions = None;
     Ok(config)
@@ -225,38 +237,23 @@ pub(crate) fn build_agent_resume_config(turn: &TurnContext) -> Result<Config, Fu
 async fn build_spawn_agent_shared_config(turn: &TurnContext) -> Result<Config, FunctionCallError> {
     #[allow(deprecated)]
     let turn_cwd = turn.cwd.clone();
-    if !spawn_cwd_requires_config_refresh(turn.config.as_ref(), &turn_cwd) {
-        return build_agent_shared_config((*turn.config).clone(), turn);
-    }
-    let refreshed_config = build_refreshed_spawn_config(turn.config.as_ref(), &turn_cwd).await?;
-    build_agent_shared_config(refreshed_config, turn)
+    build_spawn_agent_shared_config_for_cwd(turn, &turn_cwd).await
 }
 
-fn spawn_cwd_requires_config_refresh(
-    base_config: &Config,
-    cwd: &codex_utils_absolute_path::AbsolutePathBuf,
-) -> bool {
-    if *cwd == base_config.cwd {
-        return false;
-    }
-
-    !base_config
-        .config_layer_stack
-        .get_layers(
-            codex_config::ConfigLayerStackOrdering::LowestPrecedenceFirst,
-            /*include_disabled*/ true,
-        )
-        .into_iter()
-        .filter_map(|layer| match &layer.name {
-            ConfigLayerSource::Project { dot_codex_folder } => dot_codex_folder.parent(),
-            _ => None,
-        })
-        .any(|project_root| cwd.as_path().starts_with(project_root))
+async fn build_spawn_agent_shared_config_for_cwd(
+    turn: &TurnContext,
+    spawn_cwd: &AbsolutePathBuf,
+) -> Result<Config, FunctionCallError> {
+    let config = refreshed_config_for_cwd(turn.config.as_ref(), spawn_cwd)
+        .await?
+        .unwrap_or_else(|| (*turn.config).clone());
+    build_agent_shared_config(config, turn, spawn_cwd)
 }
 
 fn build_agent_shared_config(
     mut config: Config,
     turn: &TurnContext,
+    spawn_cwd: &AbsolutePathBuf,
 ) -> Result<Config, FunctionCallError> {
     config.agent_roles = turn.config.agent_roles.clone();
     config.user_instructions = turn.config.user_instructions.clone();
@@ -270,91 +267,7 @@ fn build_agent_shared_config(
     config.model_reasoning_summary = Some(turn.reasoning_summary);
     config.developer_instructions = turn.developer_instructions.clone();
     config.compact_prompt = turn.compact_prompt.clone();
-    apply_spawn_agent_runtime_overrides(&mut config, turn)?;
-
-    Ok(config)
-}
-
-async fn build_refreshed_spawn_config(
-    base_config: &Config,
-    cwd: &codex_utils_absolute_path::AbsolutePathBuf,
-) -> Result<Config, FunctionCallError> {
-    let loader_overrides = LoaderOverrides {
-        user_config_path: base_config
-            .config_layer_stack
-            .get_user_config_file()
-            .cloned(),
-        user_config_profile: base_config
-            .config_layer_stack
-            .get_active_user_layer()
-            .and_then(|layer| match &layer.name {
-                ConfigLayerSource::User {
-                    profile: Some(profile),
-                    ..
-                } => profile.parse().ok(),
-                _ => None,
-            }),
-        ..Default::default()
-    };
-
-    let refreshed_config = ConfigBuilder::default()
-        .codex_home(base_config.codex_home.to_path_buf())
-        .loader_overrides(loader_overrides)
-        .fallback_cwd(Some(cwd.to_path_buf()))
-        .build()
-        .await
-        .map_err(|err| {
-            FunctionCallError::RespondToModel(format!(
-                "failed to load subagent config for {}: {err}",
-                cwd.display()
-            ))
-        })?;
-
-    let mut config = base_config
-        .rebuild_preserving_session_layers(&refreshed_config)
-        .await
-        .map_err(|err| {
-            FunctionCallError::RespondToModel(format!(
-                "failed to rebuild subagent config for {}: {err}",
-                cwd.display()
-            ))
-        })?;
-
-    if let (Some(user_config_file), Some(active_user_layer)) = (
-        base_config.config_layer_stack.get_user_config_file(),
-        base_config.config_layer_stack.get_active_user_layer(),
-    ) {
-        let config_layer_stack = config
-            .config_layer_stack
-            .with_user_config(user_config_file, active_user_layer.config.clone());
-        let config_toml = config_layer_stack
-            .effective_config()
-            .try_into()
-            .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
-        let default_zsh_path = config
-            .zsh_path
-            .clone()
-            .map(codex_utils_absolute_path::AbsolutePathBuf::try_from)
-            .transpose()
-            .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
-        config = Config::load_config_with_layer_stack(
-            LOCAL_FS.as_ref(),
-            config_toml,
-            ConfigOverrides {
-                cwd: Some(base_config.cwd.to_path_buf()),
-                default_zsh_path,
-                ..Default::default()
-            },
-            config.codex_home.clone(),
-            config_layer_stack,
-        )
-        .await
-        .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
-    }
-
-    config.features = base_config.features.clone();
-    config.notify = base_config.notify.clone();
-    config.bypass_hook_trust = base_config.bypass_hook_trust;
+    apply_spawn_agent_runtime_overrides(&mut config, turn, spawn_cwd)?;
 
     Ok(config)
 }
@@ -379,6 +292,7 @@ pub(crate) fn reject_full_fork_spawn_overrides(
 pub(crate) fn apply_spawn_agent_runtime_overrides(
     config: &mut Config,
     turn: &TurnContext,
+    spawn_cwd: &AbsolutePathBuf,
 ) -> Result<(), FunctionCallError> {
     config
         .permissions
@@ -388,11 +302,13 @@ pub(crate) fn apply_spawn_agent_runtime_overrides(
             FunctionCallError::RespondToModel(format!("approval_policy is invalid: {err}"))
         })?;
     config.approvals_reviewer = turn.config.approvals_reviewer;
-    config.permissions.shell_environment_policy = turn.shell_environment_policy.clone();
-    config.codex_linux_sandbox_exe = turn.codex_linux_sandbox_exe.clone();
     #[allow(deprecated)]
-    let turn_cwd = turn.cwd.clone();
-    config.cwd = turn_cwd;
+    let parent_turn_cwd = &turn.cwd;
+    if spawn_cwd == parent_turn_cwd {
+        config.permissions.shell_environment_policy = turn.shell_environment_policy.clone();
+    }
+    config.codex_linux_sandbox_exe = turn.codex_linux_sandbox_exe.clone();
+    config.cwd = spawn_cwd.clone();
     config
         .permissions
         .set_permission_profile(turn.permission_profile())
@@ -400,6 +316,36 @@ pub(crate) fn apply_spawn_agent_runtime_overrides(
             FunctionCallError::RespondToModel(format!("permission_profile is invalid: {err}"))
         })?;
     Ok(())
+}
+
+pub(crate) fn resolve_spawn_workdir(
+    turn: &TurnContext,
+    workdir: Option<&str>,
+) -> Option<AbsolutePathBuf> {
+    #[allow(deprecated)]
+    let turn_cwd = turn.cwd.as_path();
+    workdir
+        .map(str::trim)
+        .filter(|workdir| !workdir.is_empty())
+        .map(|workdir| AbsolutePathBuf::resolve_path_against_base(workdir, turn_cwd))
+}
+
+pub(crate) fn spawn_agent_environment_selections(
+    turn: &TurnContext,
+    spawn_cwd: Option<&AbsolutePathBuf>,
+) -> Vec<TurnEnvironmentSelection> {
+    let Some(spawn_cwd) = spawn_cwd else {
+        return turn.environments.to_selections();
+    };
+
+    turn.environments
+        .turn_environments
+        .iter()
+        .map(|environment| TurnEnvironmentSelection {
+            environment_id: environment.environment_id.clone(),
+            cwd: spawn_cwd.clone(),
+        })
+        .collect()
 }
 
 pub(crate) async fn apply_requested_spawn_agent_model_overrides(
